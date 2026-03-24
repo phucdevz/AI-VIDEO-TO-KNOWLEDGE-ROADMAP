@@ -8,7 +8,7 @@
 
 ---
 
-## 🌟 Giới thiệu (Overview)
+## Giới thiệu (Overview)
 Dự án được phát triển nhằm giải quyết vấn đề "quá tải thông tin" từ các video bài giảng dài (YouTube, MS Teams, Zoom). Hệ thống sử dụng **Generative AI** để chuyển đổi dữ liệu video thô thành một hệ sinh thái tri thức có cấu trúc, giúp sinh viên tiết kiệm 80% thời gian ôn tập.
 
 ### 🎯 Mục tiêu đồ án:
@@ -18,7 +18,7 @@ Dự án được phát triển nhằm giải quyết vấn đề "quá tải th
 
 ---
 
-## 🚀 Tính năng đột phá (Key Features)
+## Tính năng đột phá (Key Features)
 
 ### 1. Phân tích ngữ nghĩa & Timestamp (Deep Time-Linking)
 * Chuyển đổi âm thanh video thành văn bản tiếng Việt chính xác.
@@ -46,7 +46,7 @@ Dự án được phát triển nhằm giải quyết vấn đề "quá tải th
 
 ---
 
-## 📦 Hướng dẫn cài đặt (Installation)
+## Hướng dẫn cài đặt (Installation)
 
 ### 1. Yêu cầu hệ thống
 * Python 3.9+ | Node.js 18+ | FFmpeg
@@ -58,7 +58,7 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt 
 ```
-###3 . Cài đặt Frontend
+### 3 . Cài đặt Frontend
 ```bash
 cd frontend
 npm install
@@ -71,7 +71,7 @@ SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_anon_key
 ```
 
-📊 Quy trình xử lý dữ liệu (Data Pipeline)
+## Quy trình xử lý dữ liệu (Data Pipeline)
 Input: Người dùng cung cấp Link YouTube hoặc File MP4.
 
 Extraction: Trích xuất Audio -> Whisper trích xuất văn bản kèm Timestamp.
@@ -80,12 +80,12 @@ AI Reasoning: Gemini phân tích văn bản -> Xuất JSON (Quiz) và Mermaid Co
 
 Interactive UI: React hiển thị Video Player song song với Sơ đồ và bảng câu hỏi.
 
-🛡 Phản biện Hội đồng (VIVA Preparedness)
+## Phản biện Hội đồng (VIVA Preparedness)
 Tại sao không dùng ChatGPT? -> Hệ thống sử dụng RAG để đảm bảo độ chính xác 100% dựa trên nội dung video, tích hợp Deep Time-Linking mà Chatbot truyền thống không có.
 
 Chi phí vận hành? -> Tối ưu hóa bằng Gemini Flash API (Free Tier) và xử lý tại chỗ (On-premise) cho Whisper, chi phí xấp xỉ 0 VNĐ.
 
-🤝 Liên hệ (Contact)
+## Liên hệ (Contact)
 Sinh viên thực hiện: [Nguyễn Trường Phục]
 
 Email: agenyluuvong@gmail.com
