@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { CommandPalette } from './components/command-palette'
 import { Layout } from './components/layout'
 import { ToastHost } from './components/ui/ToastHost'
+import { EtherToaster } from './lib/etherToast'
 import {
   AnalyticsPage,
   AuthPage,
@@ -15,6 +16,7 @@ export default function App() {
   return (
     <>
       <ToastHost />
+      <EtherToaster />
       <CommandPalette />
       <Routes>
         <Route path="/login" element={<AuthPage />} />

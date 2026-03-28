@@ -42,6 +42,7 @@ export function WorkspaceVideoPanel({
   const seekToSeconds = useWorkspaceStore((s) => s.seekToSeconds)
   const clearSeekRequest = useWorkspaceStore((s) => s.clearSeekRequest)
   const setVideoCurrentTimeSeconds = useWorkspaceStore((s) => s.setVideoCurrentTimeSeconds)
+  const clipLoopPlaybackPulse = useWorkspaceStore((s) => s.clipLoopPlaybackPulse)
 
   useEffect(() => {
     const s0 = useMediaCommandStore.getState()
@@ -66,12 +67,19 @@ export function WorkspaceVideoPanel({
   useEffect(() => {
     if (seekToSeconds == null) return
     if (variant === 'placeholder') return
+    setVideoCurrentTimeSeconds(seekToSeconds)
     const p = playerRef.current
     if (p) {
       p.seekTo(seekToSeconds, 'seconds')
     }
     clearSeekRequest()
-  }, [seekToSeconds, clearSeekRequest, variant])
+  }, [seekToSeconds, clearSeekRequest, setVideoCurrentTimeSeconds, variant])
+
+  useEffect(() => {
+    if (variant === 'placeholder') return
+    if (clipLoopPlaybackPulse === 0) return
+    setPlaying(true)
+  }, [clipLoopPlaybackPulse, variant])
 
   const handleReady = () => {
     if (resumeAppliedRef.current) return
@@ -84,7 +92,13 @@ export function WorkspaceVideoPanel({
   }
 
   const handleProgress = (state: { playedSeconds: number }) => {
-    onPlaybackProgress?.(state.playedSeconds)
+    const sec = state.playedSeconds
+    const loop = useWorkspaceStore.getState().clipLoop
+    if (loop && sec >= loop.end - 0.35) {
+      playerRef.current?.seekTo(loop.start, 'seconds')
+    }
+    onPlaybackProgress?.(sec)
+    setVideoCurrentTimeSeconds(sec)
   }
 
   if (variant === 'placeholder') {

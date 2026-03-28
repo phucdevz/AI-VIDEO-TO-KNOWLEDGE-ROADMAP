@@ -1,8 +1,24 @@
-import { X } from 'lucide-react'
+import { AlertCircle, Check, Info, Loader2, X } from 'lucide-react'
+import type { ToastVariant } from '../../stores/useToastStore'
 import { useToastStore } from '../../stores/useToastStore'
+
+function ToastIcon({ variant }: { variant: ToastVariant }) {
+  const cls = 'h-5 w-5 shrink-0 stroke-[1.5]'
+  switch (variant) {
+    case 'success':
+      return <Check className={`${cls} text-ds-secondary`} aria-hidden />
+    case 'error':
+      return <AlertCircle className={`${cls} text-red-400`} aria-hidden />
+    case 'info':
+      return <Loader2 className={`${cls} animate-spin text-ds-primary`} aria-hidden />
+    default:
+      return <Info className={`${cls} text-ds-text-secondary`} aria-hidden />
+  }
+}
 
 /**
  * Fixed stack above app chrome (z-[200]). Use `useToastStore.getState().pushToast(...)`.
+ * Surface: glass + viền primary (design system).
  */
 export function ToastHost() {
   const toasts = useToastStore((s) => s.toasts)
@@ -18,16 +34,10 @@ export function ToastHost() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={[
-            'pointer-events-auto ds-surface-glass flex items-start gap-3 rounded-ds-sm border px-4 py-3 shadow-ds-soft backdrop-blur-md',
-            t.variant === 'error' && 'border-red-400/40 text-ds-text-primary',
-            t.variant === 'success' && 'border-ds-secondary/50 text-ds-text-primary',
-            t.variant === 'default' && 'border-ds-border text-ds-text-primary',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-          role="status"
+          className="pointer-events-auto ds-surface-glass flex items-start gap-3 rounded-ds-sm border border-ds-primary px-4 py-3 text-ds-text-primary shadow-ds-soft backdrop-blur-md"
+          role={t.variant === 'error' ? 'alert' : 'status'}
         >
+          <ToastIcon variant={t.variant} />
           <p className="min-w-0 flex-1 text-base font-medium leading-snug md:text-sm">{t.message}</p>
           <button
             type="button"

@@ -1,6 +1,8 @@
 export { LearningProgressHud } from './LearningProgressHud'
+export { WorkspaceSkeleton } from './WorkspaceSkeleton'
 export { LearningProgressTrack } from './LearningProgressTrack'
 export { MindmapPanel } from './MindmapPanel'
+export { ProcessingOverlay } from './ProcessingOverlay'
 export { ProcessingVisualizer } from './ProcessingVisualizer'
 export { TutorSidebar } from './TutorSidebar'
 export { WorkspaceVideoPanel } from './WorkspaceVideoPanel'

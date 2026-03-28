@@ -94,6 +94,103 @@
     }
   }
 
+  /* --- Mindmap Ether: pill nodes, mờ secondary edges, root neon, hover cyan --- */
+  .mindmap-panel-svg svg g.node:not(.section-root) :is(rect, circle, path, polygon, ellipse) {
+    transition:
+      fill 0.2s ease,
+      stroke 0.2s ease,
+      stroke-width 0.2s ease,
+      filter 0.2s ease,
+      transform 0.2s ease;
+  }
+
+  .mindmap-panel-svg svg g.node:not(.section-root) rect {
+    rx: 999px;
+    ry: 999px;
+  }
+
+  .mindmap-panel-svg svg g.node:not(.section-root) :is(rect, circle, path, polygon, ellipse) {
+    fill: rgba(124, 77, 255, 0.1) !important;
+    stroke: #7c4dff !important;
+    stroke-width: 1px !important;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='highContrast'] svg g.node:not(.section-root) text {
+    fill: #e6f1ff !important;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='highContrast'] svg g.node:not(.section-root) foreignObject div,
+  .mindmap-panel-svg[data-mindmap-theme='highContrast'] svg g.node:not(.section-root) foreignObject span {
+    color: #e6f1ff !important;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='softPastel'] svg g.node:not(.section-root) text {
+    fill: #0a192f !important;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='softPastel'] svg g.node:not(.section-root) foreignObject div,
+  .mindmap-panel-svg[data-mindmap-theme='softPastel'] svg g.node:not(.section-root) foreignObject span {
+    color: #0a192f !important;
+  }
+
+  /* Trung tâm Lecture core — lớn hơn + neon ds-primary */
+  .mindmap-panel-svg svg g.section-root :is(circle, rect, path, polygon, ellipse) {
+    transition:
+      fill 0.2s ease,
+      stroke 0.2s ease,
+      stroke-width 0.2s ease,
+      filter 0.2s ease,
+      transform 0.2s ease;
+    fill: rgba(124, 77, 255, 0.18) !important;
+    stroke: #7c4dff !important;
+    stroke-width: 2.5px !important;
+    filter: drop-shadow(0 0 12px rgba(124, 77, 255, 0.95))
+      drop-shadow(0 0 28px rgba(124, 77, 255, 0.45)) !important;
+    transform: scale(1.12);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .mindmap-panel-svg svg g.section-root circle,
+  .mindmap-panel-svg svg g.section-root ellipse {
+    transform: scale(1.14);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='highContrast'] svg g.section-root text {
+    fill: #e6f1ff !important;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='highContrast'] svg g.section-root foreignObject div,
+  .mindmap-panel-svg[data-mindmap-theme='highContrast'] svg g.section-root foreignObject span {
+    color: #e6f1ff !important;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='softPastel'] svg g.section-root text {
+    fill: #312e81 !important;
+  }
+
+  .mindmap-panel-svg[data-mindmap-theme='softPastel'] svg g.section-root foreignObject div,
+  .mindmap-panel-svg[data-mindmap-theme='softPastel'] svg g.section-root foreignObject span {
+    color: #312e81 !important;
+    font-weight: 700 !important;
+  }
+
+  /* Đường nối: ds-text-secondary mờ, 1.5px, nét tròn — path basis đã cong sẵn từ Mermaid */
+  .mindmap-panel-svg svg path[class*='edge'],
+  .mindmap-panel-svg svg g.edge path {
+    stroke: rgba(136, 146, 176, 0.5) !important;
+    stroke-width: 1.5px !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    fill: none !important;
+  }
+
+  .mindmap-panel-svg svg .edge {
+    stroke-width: 1.5px !important;
+  }
+
   /**
    * Node mindmap đã xem qua mốc thời gian — ds-secondary (cyan).
    */
@@ -108,6 +205,59 @@
 
   .mindmap-panel-svg svg g.mindmap-node-complete foreignObject div,
   .mindmap-panel-svg svg g.mindmap-node-complete foreignObject span {
+    color: #00e5ff !important;
+  }
+
+  /**
+   * Nút đang khớp mốc thời gian gần currentTime nhất — pulse + viền amber (khác cyan “đã xem”).
+   */
+  .mindmap-panel-svg svg g.mindmap-node-current {
+    @apply animate-pulse;
+  }
+
+  .mindmap-panel-svg svg g.mindmap-node-current :is(path, rect, circle, polygon, ellipse) {
+    stroke: #ffb300 !important;
+    stroke-width: 2.75px !important;
+    filter: drop-shadow(0 0 10px rgba(255, 179, 0, 0.55)) drop-shadow(0 0 18px rgba(255, 193, 7, 0.28)) !important;
+  }
+
+  .mindmap-panel-svg svg g.mindmap-node-current text {
+    fill: #ffe082 !important;
+  }
+
+  .mindmap-panel-svg svg g.mindmap-node-current foreignObject div,
+  .mindmap-panel-svg svg g.mindmap-node-current foreignObject span {
+    color: #ffe082 !important;
+  }
+
+  /* Hover sau complete để vẫn sáng / scale khi đã học mốc */
+  .mindmap-panel-svg svg g.node:hover :is(rect, circle, path, polygon, ellipse) {
+    stroke: #00e5ff !important;
+    fill: rgba(0, 229, 255, 0.2) !important;
+    filter: drop-shadow(0 0 10px rgba(0, 229, 255, 0.55)) drop-shadow(0 0 20px rgba(0, 229, 255, 0.25)) !important;
+    transform: scale(1.06);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .mindmap-panel-svg svg g.section-root:hover :is(circle, ellipse) {
+    transform: scale(1.2);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .mindmap-panel-svg svg g.section-root:hover :is(rect, path, polygon) {
+    transform: scale(1.09);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .mindmap-panel-svg svg g.node:hover text {
+    fill: #00e5ff !important;
+  }
+
+  .mindmap-panel-svg svg g.node:hover foreignObject div,
+  .mindmap-panel-svg svg g.node:hover foreignObject span {
     color: #00e5ff !important;
   }
 
