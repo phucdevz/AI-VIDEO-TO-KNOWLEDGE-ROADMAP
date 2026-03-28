@@ -1,0 +1,33 @@
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+
+type ShellContextValue = {
+  mobileNavOpen: boolean
+  setMobileNavOpen: (open: boolean) => void
+  toggleMobileNav: () => void
+}
+
+const ShellContext = createContext<ShellContextValue | null>(null)
+
+export function ShellProvider({ children }: { children: ReactNode }) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const toggleMobileNav = useCallback(() => {
+    setMobileNavOpen((o) => !o)
+  }, [])
+
+  const value = useMemo(
+    () => ({
+      mobileNavOpen,
+      setMobileNavOpen,
+      toggleMobileNav,
+    }),
+    [mobileNavOpen, toggleMobileNav],
+  )
+
+  return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>
+}
+
+export function useShell() {
+  const ctx = useContext(ShellContext)
+  if (!ctx) throw new Error('useShell must be used within ShellProvider')
+  return ctx
+}

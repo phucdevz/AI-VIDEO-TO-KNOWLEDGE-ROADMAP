@@ -1,0 +1,9 @@
+{
+  "name": "@ether/design-tokens",
+  "version": "0.0.1",
+  "private": true,
+  "main": "tailwind-preset.cjs",
+  "exports": {
+    ".": "./tailwind-preset.cjs"
+  }
+}

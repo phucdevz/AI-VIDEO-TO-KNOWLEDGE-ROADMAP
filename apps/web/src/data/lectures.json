@@ -1,0 +1,50 @@
+[
+  {
+    "id": "1",
+    "title": "Neural Architecture Search",
+    "course": "Deep Learning",
+    "progress": 90,
+    "duration": "1h 24m",
+    "is_verified": true
+  },
+  {
+    "id": "2",
+    "title": "Digital Scarcity Economics",
+    "course": "Web3",
+    "progress": 72,
+    "duration": "45m",
+    "is_verified": true
+  },
+  {
+    "id": "3",
+    "title": "Urban Design 2050",
+    "course": "Architecture",
+    "progress": 95,
+    "duration": "58m",
+    "is_verified": true
+  },
+  {
+    "id": "4",
+    "title": "Transformer Attention",
+    "course": "NLP",
+    "progress": 40,
+    "duration": "32m",
+    "is_verified": true
+  },
+  {
+    "id": "5",
+    "title": "RAG for Lectures",
+    "course": "AI Systems",
+    "progress": 15,
+    "duration": "1h 05m",
+    "is_verified": false
+  },
+  {
+    "id": "6",
+    "title": "Exam Prep: Graphs",
+    "course": "Algorithms",
+    "progress": 60,
+    "duration": "50m",
+    "is_verified": false
+  }
+]

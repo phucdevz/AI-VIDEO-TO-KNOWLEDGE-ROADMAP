@@ -58,11 +58,17 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt 
 ```
-### 3 . Cài đặt Frontend
+### 3. Cài đặt Frontend (monorepo)
+Từ thư mục gốc của repository:
+
 ```bash
-cd frontend
 npm install
+npm run dev
 ```
+
+Ứng dụng React nằm trong **`apps/web`** (Vite + TypeScript + Tailwind). Token màu và preset Tailwind dùng chung: **`packages/design-tokens`**. Tài liệu UI/UX “Intelligent Ether”: **[apps/web/docs/design.md](apps/web/docs/design.md)**.
+
+Các route thử nghiệm: `/login`, `/workspace`, `/roadmap`, `/quiz`, `/analytics` (mặc định `/` chuyển tới `/roadmap`).
 ### 4. Biến môi trường (.env)
 Tạo file .env tại thư mục /backend:
 ```bash

@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Cỡ gốc 16px (body) trên mobile; Inter không bị scale nhỏ hơn */
+  html {
+    font-size: 16px;
+  }
+  body {
+    @apply font-body antialiased text-ds-base text-ds-text-primary;
+  }
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+  a[href] {
+    @apply cursor-pointer;
+  }
+}
+
+/* AI Video-to-Knowledge — strict design system (glass / navy) */
+@layer components {
+  .ds-surface-glass {
+    background: rgba(16, 30, 56, 0.6);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .ds-transition {
+    transition: all 0.2s ease-in-out;
+  }
+
+  /**
+   * Interactive affordances: default / hover (via Tailwind on each control) / active / disabled.
+   */
+  .ds-interactive {
+    @apply cursor-pointer select-none transition-[transform,opacity,background-color,border-color,color,box-shadow] duration-200 ease-in-out;
+    @apply active:scale-[0.98] active:brightness-[0.97];
+  }
+
+  .ds-interactive:disabled {
+    @apply pointer-events-none cursor-not-allowed opacity-40 active:scale-100 active:brightness-100;
+  }
+
+  .ds-interactive-icon {
+    @apply cursor-pointer transition-[transform,colors,opacity] duration-200 ease-in-out active:scale-95;
+  }
+
+  .ds-interactive-icon:disabled {
+    @apply pointer-events-none cursor-not-allowed opacity-40;
+  }
+
+  .ds-interactive-card {
+    @apply cursor-pointer transition-[transform,border-color,box-shadow] duration-200 ease-in-out;
+    @apply active:scale-[0.995] active:brightness-[0.98];
+  }
+
+  /**
+   * Labels (uppercase UI): tối thiểu 14px trên mobile, md+ có thể nhỏ hơn.
+   */
+  .ds-text-label {
+    @apply text-[14px] font-bold uppercase leading-tight tracking-wider md:text-xs;
+  }
+
+  /**
+   * Phụ đề / mô tả phụ: 16px mobile, 14px từ md.
+   */
+  .ds-text-body-secondary {
+    @apply text-base font-normal leading-relaxed text-ds-text-secondary md:text-sm;
+  }
+
+  /**
+   * Mindmap Mermaid: node ≥14px; foreignObject (Mermaid 10+) — ellipsis 2 dòng.
+   */
+  .mindmap-panel-svg svg foreignObject div,
+  .mindmap-panel-svg svg foreignObject span {
+    display: -webkit-box;
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 14px !important;
+    line-height: 1.25;
+    word-break: break-word;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .mindmap-panel-svg svg text {
+    font-size: 14px;
+  }
+
+  @media (min-width: 768px) {
+    .mindmap-panel-svg svg text {
+      font-size: 13px;
+    }
+  }
+
+  /**
+   * Node mindmap đã xem qua mốc thời gian — ds-secondary (cyan).
+   */
+  .mindmap-panel-svg svg g.mindmap-node-complete :is(path, rect, circle, polygon, ellipse) {
+    stroke: #00e5ff !important;
+    fill: rgba(0, 229, 255, 0.22) !important;
+  }
+
+  .mindmap-panel-svg svg g.mindmap-node-complete text {
+    fill: #00e5ff !important;
+  }
+
+  .mindmap-panel-svg svg g.mindmap-node-complete foreignObject div,
+  .mindmap-panel-svg svg g.mindmap-node-complete foreignObject span {
+    color: #00e5ff !important;
+  }
+
+  /**
+   * Nội dung scroll không bị che bởi home indicator / thanh điều hướng trình duyệt.
+   */
+  .pb-page-safe {
+    padding-bottom: max(2rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  @media (min-width: 768px) {
+    .pb-page-safe {
+      padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+    }
+  }
+}
+
+@layer utilities {
+  .ether-gradient {
+    background: linear-gradient(135deg, #6a37d4 0%, #ae8dff 100%);
+  }
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .glass-card {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .glass-effect {
+    background: rgba(245, 246, 247, 0.8);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .primary-gradient {
+    background: linear-gradient(135deg, #6a37d4 0%, #ae8dff 100%);
+  }
+  .gold-gradient {
+    background: linear-gradient(135deg, #ffd700 0%, #ae8dff 100%);
+  }
+  .violet-pulse {
+    animation: pulse 2s infinite;
+  }
+  .mindmap-node {
+    transition: transform 0.2s ease;
+  }
+  .mindmap-node:hover {
+    transform: scale(1.05);
+  }
+}

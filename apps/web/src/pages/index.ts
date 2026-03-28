@@ -1,0 +1,6 @@
+export { AnalyticsPage } from './AnalyticsPage'
+export { AuthPage } from './AuthPage'
+export { DashboardPage } from './DashboardPage'
+export { QuizCenterPage } from './QuizCenterPage'
+export { SettingsPage } from './SettingsPage'
+export { WorkspacePage } from './WorkspacePage'
