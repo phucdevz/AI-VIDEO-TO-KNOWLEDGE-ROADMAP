@@ -169,19 +169,17 @@ async def _run_pipeline(url: str) -> tuple[str, str]:
         return f"### Lỗi không mong đợi\n\n`{e!s}`", ""
 
 
-def build_admin_blocks() -> gr.Blocks:
-    theme = gr.themes.Soft(
+def _admin_theme() -> gr.themes.Soft:
+    return gr.themes.Soft(
         primary_hue="violet",
         secondary_hue="blue",
         neutral_hue="slate",
         font=["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
     )
 
-    with gr.Blocks(
-        title="AI Video-to-Knowledge — Admin",
-        theme=theme,
-        css=_ADMIN_CSS,
-    ) as demo:
+
+def build_admin_blocks() -> gr.Blocks:
+    with gr.Blocks(title="AI Video-to-Knowledge — Admin") as demo:
         gr.Markdown(
             "# Bảng điều hành Backend\n"
             "Cấu hình key, theo dõi health và chạy thử pipeline (Extract → Transcribe → AI → Save).",
