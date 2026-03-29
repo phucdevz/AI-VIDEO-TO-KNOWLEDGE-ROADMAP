@@ -1,4 +1,4 @@
-import { Bookmark, Play, Send, Sparkles, Trash2 } from 'lucide-react'
+import { Bookmark, BookmarkX, Play, Send, Sparkles, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useToastStore } from '../../stores/useToastStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -152,9 +152,16 @@ export function TutorSidebar() {
           ) : null}
           <div className="mt-4 flex-1 overflow-y-auto">
             {mindmapHighlights.length === 0 ? (
-              <p className="rounded-ds-sm bg-ds-border/15 p-4 text-sm text-ds-text-secondary">
-                Chưa có clip nào. Lưu từ mindmap để ôn nhanh từng khối kiến thức.
-              </p>
+              <div
+                className="flex flex-col items-center gap-3 rounded-ds-lg border border-ds-border border-dashed bg-ds-border/10 px-4 py-8 text-center"
+                role="status"
+              >
+                <BookmarkX className="h-10 w-10 text-ds-text-secondary" strokeWidth={1.5} aria-hidden />
+                <p className="text-sm font-bold text-ds-text-primary">Chưa có bookmark nào</p>
+                <p className="max-w-[18rem] text-xs leading-relaxed text-ds-text-secondary">
+                  Lưu clip từ Neural map (chuột phải nút → Lưu vào mục ưa thích) để ôn nhanh từng khối kiến thức.
+                </p>
+              </div>
             ) : (
               <ul className="flex flex-col gap-2">
                 {mindmapHighlights.map((h) => (

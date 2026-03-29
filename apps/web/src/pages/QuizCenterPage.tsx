@@ -35,7 +35,7 @@ export function QuizCenterPage() {
             <span className="text-xs font-bold uppercase tracking-wider text-ds-primary">Module 4</span>
             <span className="text-xs font-bold text-ds-text-secondary">Question 3 / 12</span>
           </div>
-          <h3 className="text-xl font-bold text-ds-text-primary">
+          <h3 className="line-clamp-3 text-xl font-bold text-ds-text-primary">
             How does self-attention mix token representations?
           </h3>
           <ul className="space-y-3">

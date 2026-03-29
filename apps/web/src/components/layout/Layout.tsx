@@ -31,7 +31,7 @@ function LayoutInner() {
   }, [mobileNavOpen, setMobileNavOpen])
 
   return (
-    <div className="min-h-screen bg-ds-bg">
+    <div className="min-h-screen min-w-0 bg-ds-bg">
       {mobileNavOpen && (
         <button
           type="button"
@@ -41,9 +41,9 @@ function LayoutInner() {
         />
       )}
       <MainSidebar />
-      <div className="flex min-h-screen flex-col pl-0 md:pl-16 lg:pl-64">
+      <div className="flex min-h-screen min-w-0 flex-col overflow-x-clip pl-0 md:pl-16 lg:pl-64">
         <AppHeader />
-        <main className="flex-1 pb-page-safe">
+        <main className="min-w-0 flex-1 pb-page-safe">
           <Outlet />
         </main>
       </div>

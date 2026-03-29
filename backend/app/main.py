@@ -3,6 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.admin_ui import mount_admin_app
 from app.api.routes import api_router
 from app.config import get_settings
 
@@ -23,6 +24,8 @@ app.add_middleware(
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 
+app = mount_admin_app(app)
+
 
 @app.get("/", tags=["root"])
 def root() -> dict[str, str]:
@@ -30,4 +33,5 @@ def root() -> dict[str, str]:
         "service": settings.app_name,
         "docs": "/docs",
         "health": "/api/v1/health",
+        "admin": "/admin",
     }

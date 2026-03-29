@@ -232,3 +232,40 @@ backend/
 ---
 
 *Tài liệu này là “single source of truth” cho trạng thái implementation tại thời điểm bàn giao; cập nhật `PROGRESS.md` sau mỗi milestone lớn.*
+
+---
+
+## 7. Bug Fix Log (QA / Frontend hardening — 2026-03)
+
+**Layout & responsive**
+
+- `html` / `body`: `overflow-x: clip` chặn cuộn ngang trên mobile.
+- `Layout`: `min-w-0`, `overflow-x-clip` trên cột chính; `main` có `min-w-0` để flex không tràn.
+- `MainSidebar`: `z-[70]` trên mobile (trên overlay `z-40`) để hamburger drawer không bị che.
+- `WorkspacePage` + `WorkspaceSkeleton`: `min-w-0` + `overflow-x-clip`.
+
+**Interaction & design system (`ds-*`)**
+
+- `.ds-interactive`, `.ds-interactive-icon`, `.ds-interactive-card`: thêm **hover `scale(1.02)`** và **active `scale(0.98)`** (đồng bộ yêu cầu QA); `prefers-reduced-motion` tắt scale.
+- Dọn **utilities legacy** trong `index.css` (`.ether-gradient`, `.glass-panel`, … không còn dùng) → giữ `.ds-gradient-primary` dự phòng.
+- **Tippy** mindmap: theme đổi tên **`ds-mindmap-tooltip`**; `zIndex` tooltip **360**.
+
+**Z-index (modal / toast)**
+
+- **Command Palette**: `z-[400]` / `z-[401]` (luôn trên chrome và fullscreen workspace).
+- **EtherToaster** (`react-hot-toast`): `containerStyle.zIndex: 390`.
+
+**Trang & component**
+
+- **Dashboard**: tách ô URL pipeline vs ô tìm thư viện; **skeleton** grid khi tải; **empty state** (Lucide `Library`) khi filter rỗng; `line-clamp` tiêu đề / khóa học trên thẻ.
+- **Workspace video**: `validateSeekSeconds` + **try/catch** quanh `seekTo`; guard `playedSeconds` NaN; clip loop chỉ seek khi start/end hợp lệ.
+- **Mindmap**: **`MindmapErrorBoundary`** bọc `MindmapPanel` trên `WorkspacePage`.
+- **Analytics**: `ResponsiveContainer` + `debounce={50}`; khối radar `min-w-0` / chiều cao responsive `min-h-[240px]`, `h-[min(360px,70vw)]`; mục gợi ý `line-clamp-2`.
+- **Quiz**: tiêu đề câu hỏi `line-clamp-3`.
+- **Command Palette**: tiêu đề bài giảng `line-clamp-2`, khóa học `line-clamp-1`.
+- **TutorSidebar / Highlights**: empty state có icon **`BookmarkX`** + copy mô tả.
+
+**Ghi chú**
+
+- ESLint rule `react-hooks/set-state-in-effect` trên `WorkspaceVideoPanel`: `setPlaying` sau clip loop bọc **`queueMicrotask`** để tránh setState đồng bộ trong effect.
+- Một số cảnh báo `react-refresh/only-export-components` (vd. `ShellContext`, `etherToast`) là **nợ đã có** — chưa refactor tách file trong pass này.

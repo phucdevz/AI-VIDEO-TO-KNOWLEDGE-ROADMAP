@@ -1,10 +1,12 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Focus, Maximize2, Minimize2, Sparkles } from 'lucide-react'
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import {
+  KnowledgePackExportMenu,
   LearningProgressHud,
+  MindmapErrorBoundary,
   MindmapPanel,
   ProcessingOverlay,
   ProcessingVisualizer,
@@ -103,7 +105,19 @@ export function WorkspacePage() {
   const workspaceColumnsRef = useRef<HTMLDivElement>(null)
   const playedSecondsRef = useRef(0)
   const [knowledgeProcessing, setKnowledgeProcessing] = useState(false)
+  const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel | null>(null)
   const pushToast = useToastStore((s) => s.pushToast)
+  const mindmapHighlights = useWorkspaceStore((s) => s.mindmapHighlights)
+
+  const knowledgePackCtx = useMemo(
+    () => ({
+      lectureTitle: resolvedTitle,
+      course: resolvedCourse,
+      lectureId: resolvedId,
+      highlights: mindmapHighlights,
+    }),
+    [mindmapHighlights, resolvedCourse, resolvedId, resolvedTitle],
+  )
 
   const onPlaybackProgress = useCallback((seconds: number) => {
     playedSecondsRef.current = seconds
@@ -249,7 +263,7 @@ export function WorkspacePage() {
           <ProcessingOverlay active />
         </div>
       ) : (
-      <div className="flex min-h-[calc(100vh-4rem)] flex-col gap-3 overflow-y-auto px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4">
+      <div className="flex min-h-[calc(100vh-4rem)] min-w-0 flex-col gap-3 overflow-x-clip overflow-y-auto px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4">
         <AnimatePresence initial={false}>
           {fullscreenPanel == null && (
             <motion.div
@@ -260,6 +274,12 @@ export function WorkspacePage() {
               transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
               className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 overflow-hidden"
             >
+              <KnowledgePackExportMenu
+                ctx={knowledgePackCtx}
+                mindmapFilenameBase={resolvedTitle}
+                onError={(msg) => pushToast(msg, 'error')}
+                onSuccess={(msg) => pushToast(msg, 'default')}
+              />
               <button
                 type="button"
                 aria-busy={knowledgeProcessing}
@@ -321,7 +341,7 @@ export function WorkspacePage() {
             className={
               fullscreenPanel === 'video'
                 ? 'pointer-events-auto fixed inset-0 z-[120] m-0 flex min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none border-0 bg-ds-bg p-3 shadow-none sm:p-5 md:p-6'
-                : fullscreenPanel != null && fullscreenPanel !== 'video'
+                : fullscreenPanel === 'mindmap' || fullscreenPanel === 'tutor'
                   ? 'hidden'
                   : `relative order-1 w-full min-w-0 shrink-0 lg:order-none lg:transition-[width] lg:duration-300 lg:ease-[cubic-bezier(0.22,1,0.36,1)] ${
                       focusMode ? 'lg:w-[44%] lg:max-w-none' : 'lg:w-[30%]'
@@ -357,7 +377,7 @@ export function WorkspacePage() {
             className={
               fullscreenPanel === 'mindmap'
                 ? 'pointer-events-auto fixed inset-0 z-[120] m-0 flex min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none border-0 bg-ds-bg p-3 shadow-none sm:p-5 md:p-6'
-                : fullscreenPanel != null && fullscreenPanel !== 'mindmap'
+                : fullscreenPanel === 'video' || fullscreenPanel === 'tutor'
                   ? 'hidden'
                   : `relative order-2 min-h-[280px] min-w-0 flex-1 lg:order-none lg:min-h-0 lg:transition-[flex-grow] lg:duration-300 lg:ease-[cubic-bezier(0.22,1,0.36,1)] ${
                       focusMode ? 'lg:flex-[1.35]' : ''
@@ -372,7 +392,9 @@ export function WorkspacePage() {
               className="top-14 sm:top-12"
             />
             <div className={fullscreenPanel === 'mindmap' ? 'flex min-h-0 flex-1 flex-col' : 'contents'}>
-              <MindmapPanel />
+              <MindmapErrorBoundary>
+                <MindmapPanel />
+              </MindmapErrorBoundary>
             </div>
           </motion.section>
 
@@ -388,7 +410,7 @@ export function WorkspacePage() {
                 className={
                   fullscreenPanel === 'tutor'
                     ? 'pointer-events-auto fixed inset-0 z-[120] m-0 flex min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none border-0 bg-ds-bg p-3 shadow-none sm:p-5 md:p-6 lg:!w-full'
-                    : fullscreenPanel != null && fullscreenPanel !== 'tutor'
+                    : fullscreenPanel === 'video' || fullscreenPanel === 'mindmap'
                       ? 'hidden'
                       : 'relative order-3 w-full min-w-0 shrink-0 lg:order-none lg:w-[26%]'
                 }

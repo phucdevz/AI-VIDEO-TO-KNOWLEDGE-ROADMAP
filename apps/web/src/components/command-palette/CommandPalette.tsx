@@ -222,10 +222,10 @@ export function CommandPalette() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[100] bg-ds-bg/55 backdrop-blur-sm"
+            className="fixed inset-0 z-[400] bg-ds-bg/55 backdrop-blur-sm"
             onClick={close}
           />
-          <div className="fixed inset-0 z-[101] flex items-start justify-center overflow-y-auto px-4 pb-16 pt-[min(20vh,8rem)]">
+          <div className="fixed inset-0 z-[401] flex items-start justify-center overflow-y-auto px-4 pb-16 pt-[min(20vh,8rem)]">
             <motion.div
               role="dialog"
               aria-modal="true"
@@ -294,10 +294,10 @@ export function CommandPalette() {
                               aria-hidden
                             />
                             <span className="min-w-0 flex-1">
-                              <span className="block text-sm font-bold text-ds-text-primary">
+                              <span className="block text-sm font-bold text-ds-text-primary line-clamp-2">
                                 {lecture.title}
                               </span>
-                              <span className="mt-0.5 block text-xs text-ds-text-secondary">
+                              <span className="mt-0.5 block text-xs text-ds-text-secondary line-clamp-1">
                                 {lecture.course} · Mở workspace
                               </span>
                             </span>

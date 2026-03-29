@@ -52,6 +52,7 @@ export function EtherToaster() {
       containerStyle={{
         bottom: 'max(1rem, env(safe-area-inset-bottom, 0px))',
         right: 'max(1rem, env(safe-area-inset-right, 0px))',
+        zIndex: 390,
       }}
       toastOptions={{
         duration: 4200,

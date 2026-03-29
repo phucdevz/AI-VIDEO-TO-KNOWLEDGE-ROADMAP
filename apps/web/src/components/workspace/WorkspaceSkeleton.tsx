@@ -14,7 +14,7 @@ function horizontalZigzag(y: number): string {
 export function WorkspaceSkeleton() {
   return (
     <div
-      className="flex min-h-[calc(100vh-4rem)] flex-col gap-3 overflow-y-auto px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4"
+      className="flex min-h-[calc(100vh-4rem)] min-w-0 flex-col gap-3 overflow-x-clip overflow-y-auto px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4"
       aria-busy="true"
       aria-label="Đang tải workspace"
     >

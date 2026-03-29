@@ -1,113 +1,291 @@
-import { motion, useAnimation } from 'framer-motion'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import {
+  Background,
+  BackgroundVariant,
+  ControlButton,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+} from '@xyflow/react'
+import { motion } from 'framer-motion'
+import { Contrast, Copy, Download, Maximize2, Palette, ZoomIn, ZoomOut } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { toPng } from 'html-to-image'
-import { Contrast, Copy, Download, Palette, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import type { TimelineSegment } from '../../data/lectures'
 import { DEFAULT_TIMELINE_SEGMENTS } from '../../data/lectures'
 import {
-  extractMindmapNodeLabel,
-  findMindmapNodeGroupForSegmentId,
+  collectMindmapLabels,
+  DEMO_WORKSPACE_MINDMAP_TREE,
+  getNeuralLedEdgeIds,
+  mindmapTreeToReactFlow,
+  type MindmapDiagramTheme,
+  type NeuralFlowGraphEdge,
+  type NeuralFlowGraphNode,
+} from '../../lib/mindmapToReactFlow'
+import {
   resolveClipRangeFromMindmapLabel,
   resolveSeekFromMindmapLabel,
-  scrollMindmapNodeIntoViewportCenter,
-  syncMindmapNodeCompletion,
 } from '../../lib/mindmapLearning'
 import { etherWorkspaceToasts } from '../../lib/etherToast'
 import { useToastStore } from '../../stores/useToastStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
-
-const DEMO_MERMAID = `mindmap
-  root((Lecture core))
-    Concepts
-      Attention
-      Transformers
-    Skills
-      Implementation
-      Evaluation`
-
-export type MindmapDiagramTheme = 'highContrast' | 'softPastel'
-
-const MERMAID_THEME_CONFIG: Record<
-  MindmapDiagramTheme,
-  { theme: 'dark' | 'base'; themeVariables: Record<string, string> }
-> = {
-  highContrast: {
-    theme: 'dark',
-    themeVariables: {
-      /* Viền/link nhạt — màu nét & fill nút chủ yếu do CSS .mindmap-panel-svg */
-      primaryColor: '#7c4dff',
-      primaryTextColor: '#e6f1ff',
-      secondaryColor: '#1e293b',
-      tertiaryColor: '#334155',
-      lineColor: 'rgba(136, 146, 176, 0.45)',
-      mainBkg: '#0f172a',
-      nodeBorder: '#7c4dff',
-      clusterBkg: '#1e293b',
-      git0: 'rgba(124, 77, 255, 0.22)',
-      gitBranchLabel0: '#e6f1ff',
-    },
-  },
-  softPastel: {
-    theme: 'base',
-    themeVariables: {
-      primaryColor: '#7c4dff',
-      primaryTextColor: '#0a192f',
-      secondaryColor: '#fae8ff',
-      tertiaryColor: '#ede9fe',
-      lineColor: 'rgba(136, 146, 176, 0.55)',
-      background: '#faf5ff',
-      mainBkg: '#fdf4ff',
-      nodeBorder: '#7c4dff',
-      clusterBkg: '#fae8ff',
-      git0: 'rgba(124, 77, 255, 0.2)',
-      gitBranchLabel0: '#312e81',
-    },
-  },
-}
+import { NeuralFlowEdge } from './NeuralFlowEdge'
+import { NeuralNode } from './NeuralNode'
 
 const EXPORT_BG: Record<MindmapDiagramTheme, string> = {
   highContrast: '#0f172a',
   softPastel: '#faf5ff',
 }
 
+const SEGMENT_TO_FLOW_NODE: Record<string, string> = {
+  s1: 'root',
+  s2: 'attention',
+  s3: 'transformers',
+}
+
+const nodeTypes = { neural: NeuralNode }
+const edgeTypes = { neuralFlow: NeuralFlowEdge }
+
+type MindContextMenuState = {
+  x: number
+  y: number
+  nodeLabel: string
+  startSeconds: number
+  endSeconds: number
+} | null
+
+function MindmapFlowCanvas({
+  diagramTheme,
+  exportContainerRef,
+  setMindContextMenu,
+  registerFocusSegment,
+}: {
+  diagramTheme: MindmapDiagramTheme
+  exportContainerRef: MutableRefObject<HTMLDivElement | null>
+  setMindContextMenu: Dispatch<SetStateAction<MindContextMenuState>>
+  registerFocusSegment: (fn: (segmentId: string) => void) => void
+}) {
+  const notifiedRef = useRef(false)
+  const { fitView, zoomIn, zoomOut } = useReactFlow()
+
+  const labels = useMemo(() => collectMindmapLabels(DEMO_WORKSPACE_MINDMAP_TREE), [])
+  const { nodes: seedNodes, edges: seedEdges } = useMemo(
+    () => mindmapTreeToReactFlow(DEMO_WORKSPACE_MINDMAP_TREE, diagramTheme),
+    [diagramTheme],
+  )
+
+  const [nodes, setNodes, onNodesChange] = useNodesState<NeuralFlowGraphNode>(seedNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState<NeuralFlowGraphEdge>(seedEdges)
+
+  useEffect(() => {
+    const { nodes: n, edges: e } = mindmapTreeToReactFlow(DEMO_WORKSPACE_MINDMAP_TREE, diagramTheme)
+    setNodes(n)
+    setEdges(e)
+  }, [diagramTheme, setNodes, setEdges])
+
+  const videoCurrentTimeSeconds = useWorkspaceStore((s) => s.videoCurrentTimeSeconds)
+
+  const ledEdgeIds = useMemo(
+    () => getNeuralLedEdgeIds(videoCurrentTimeSeconds, labels),
+    [labels, videoCurrentTimeSeconds],
+  )
+
+  useEffect(() => {
+    setEdges((eds) =>
+      eds.map((e) => ({
+        ...e,
+        data: { ...e.data, active: ledEdgeIds.has(e.id) },
+      })),
+    )
+  }, [ledEdgeIds, setEdges])
+
+  const requestSeek = useWorkspaceStore((s) => s.requestSeek)
+  const pushToast = useToastStore((s) => s.pushToast)
+
+  const focusSegmentOnCanvas = useCallback(
+    (segmentId: string) => {
+      const id = SEGMENT_TO_FLOW_NODE[segmentId]
+      if (!id) return
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          fitView({ nodes: [{ id }], padding: 0.38, duration: 300 })
+        })
+      })
+    },
+    [fitView],
+  )
+
+  useEffect(() => {
+    registerFocusSegment(focusSegmentOnCanvas)
+  }, [focusSegmentOnCanvas, registerFocusSegment])
+
+  const onInit = useCallback(() => {
+    fitView({ padding: 0.22, duration: 0 })
+    if (!notifiedRef.current) {
+      notifiedRef.current = true
+      etherWorkspaceToasts.diagramUpdated()
+    }
+  }, [fitView])
+
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: NeuralFlowGraphNode) => {
+      const label = String(node.data.label ?? '')
+      const seconds = resolveSeekFromMindmapLabel(label)
+      if (seconds === null) {
+        useToastStore.getState().pushToast('Chưa có mốc thời gian cho nút mindmap này.', 'default')
+        return
+      }
+      const r = requestSeek(seconds, `flow-${label.slice(0, 48)}`)
+      if (!r.ok) pushToast(r.message, 'error')
+    },
+    [pushToast, requestSeek],
+  )
+
+  const onNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: NeuralFlowGraphNode) => {
+      e.preventDefault()
+      const label = String(node.data.label ?? '')
+      const range = resolveClipRangeFromMindmapLabel(label)
+      if (!range) {
+        useToastStore.getState().pushToast('Chưa gắn khoảng thời gian cho nút này.', 'default')
+        return
+      }
+      setMindContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        nodeLabel: label,
+        startSeconds: range.start,
+        endSeconds: range.end,
+      })
+    },
+    [setMindContextMenu],
+  )
+
+  const onPaneClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.detail === 2) {
+        fitView({ padding: 0.22, duration: 220 })
+      }
+    },
+    [fitView],
+  )
+
+  const controlBtnClass =
+    'ds-interactive flex items-center justify-center rounded-ds-sm !border-0 !bg-transparent p-2 text-ds-text-secondary hover:!text-ds-text-primary'
+
+  return (
+    <div
+      ref={exportContainerRef}
+      data-knowledge-mindmap-export=""
+      data-mindmap-theme={diagramTheme}
+      className={[
+        'mindmap-react-flow-host h-full min-h-[280px] rounded-ds-sm',
+        diagramTheme === 'softPastel' ? 'bg-ds-bg/[0.12]' : 'bg-ds-bg/25',
+      ].join(' ')}
+    >
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onInit={onInit}
+        onNodeClick={onNodeClick}
+        onNodeContextMenu={onNodeContextMenu}
+        onPaneClick={onPaneClick}
+        nodesDraggable
+        nodesConnectable={false}
+        elementsSelectable
+        panOnScroll={false}
+        zoomOnScroll
+        zoomOnPinch
+        zoomOnDoubleClick={false}
+        panOnDrag
+        minZoom={0.12}
+        maxZoom={2.25}
+        proOptions={{ hideAttribution: true }}
+        fitView={false}
+        className="h-full min-h-[280px] rounded-ds-sm"
+      >
+        <Background
+          id="mindmap-bg"
+          gap={20}
+          size={1}
+          color="#102038"
+          variant={BackgroundVariant.Dots}
+        />
+        <MiniMap
+          position="bottom-left"
+          pannable
+          zoomable
+          className="ds-surface-glass !m-3 !overflow-hidden rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px]"
+          maskColor="rgba(10, 25, 47, 0.5)"
+          nodeStrokeWidth={2}
+          nodeStrokeColor="#7c4dff"
+          nodeColor={() => 'rgba(124, 77, 255, 0.32)'}
+        />
+        <Controls
+          position="top-right"
+          showZoom={false}
+          showFitView={false}
+          showInteractive={false}
+          orientation="vertical"
+          className="mindmap-flow-controls ds-surface-glass m-2 flex flex-col gap-0.5 rounded-ds-lg border border-ds-border p-1 shadow-ds-soft backdrop-blur-[10px]"
+        >
+          <ControlButton
+            onClick={() => zoomOut()}
+            className={controlBtnClass}
+            title="Thu nhỏ"
+            aria-label="Thu nhỏ"
+          >
+            <ZoomOut className="h-4 w-4" strokeWidth={1.5} />
+          </ControlButton>
+          <ControlButton
+            onClick={() => zoomIn()}
+            className={controlBtnClass}
+            title="Phóng to"
+            aria-label="Phóng to"
+          >
+            <ZoomIn className="h-4 w-4" strokeWidth={1.5} />
+          </ControlButton>
+          <ControlButton
+            onClick={() => fitView({ padding: 0.22, duration: 220 })}
+            className={controlBtnClass}
+            title="Vừa khung (hoặc double-click canvas)"
+            aria-label="Vừa khung"
+          >
+            <Maximize2 className="h-4 w-4" strokeWidth={1.5} />
+          </ControlButton>
+        </Controls>
+      </ReactFlow>
+    </div>
+  )
+}
+
 /**
- * Mermaid mindmap + clickable segments → Deep Time-Linking (seeks video via Zustand).
+ * React Flow infinite canvas + deep time-links (seeks video via Zustand).
  */
 export function MindmapPanel() {
   const holderRef = useRef<HTMLDivElement>(null)
-  const scrollViewportRef = useRef<HTMLDivElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const diagramMotion = useAnimation()
-  const reactId = useId().replace(/[^a-zA-Z0-9]/g, '')
+  const exportWrapRef = useRef<HTMLDivElement>(null)
+  const focusSegmentRef = useRef<(segmentId: string) => void>(() => {})
   const [mapVisible, setMapVisible] = useState(false)
-  const [scale, setScale] = useState(1)
   const [diagramTheme, setDiagramTheme] = useState<MindmapDiagramTheme>('highContrast')
-  const [mindContextMenu, setMindContextMenu] = useState<{
-    x: number
-    y: number
-    nodeLabel: string
-    startSeconds: number
-    endSeconds: number
-  } | null>(null)
+  const [mindContextMenu, setMindContextMenu] = useState<MindContextMenuState>(null)
+
+  const registerFocusSegment = useCallback((fn: (segmentId: string) => void) => {
+    focusSegmentRef.current = fn
+  }, [])
 
   const requestSeek = useWorkspaceStore((s) => s.requestSeek)
   const addMindmapHighlight = useWorkspaceStore((s) => s.addMindmapHighlight)
   const activeSegmentId = useWorkspaceStore((s) => s.activeSegmentId)
-  const videoCurrentTimeSeconds = useWorkspaceStore((s) => s.videoCurrentTimeSeconds)
   const pushToast = useToastStore((s) => s.pushToast)
-
-  const panMindmapToSegment = useCallback((segmentId: string) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const vp = scrollViewportRef.current
-        const svg = containerRef.current?.querySelector('svg')
-        if (!vp || !svg) return
-        const g = findMindmapNodeGroupForSegmentId(svg, segmentId)
-        if (!g) return
-        scrollMindmapNodeIntoViewportCenter(vp, g)
-      })
-    })
-  }, [])
 
   const onDeepTimeLinkClick = useCallback(
     (seg: TimelineSegment) => {
@@ -116,35 +294,31 @@ export function MindmapPanel() {
         pushToast(r.message, 'error')
         return
       }
-      panMindmapToSegment(seg.id)
+      focusSegmentRef.current(seg.id)
     },
-    [panMindmapToSegment, pushToast, requestSeek],
+    [pushToast, requestSeek],
   )
 
-  const copySegmentToClipboard = useCallback(async (seg: TimelineSegment) => {
-    const line = `${formatTime(seg.startSeconds)} — ${seg.label}`
-    try {
-      await navigator.clipboard.writeText(line)
-      etherWorkspaceToasts.copyMilestone()
-    } catch {
-      pushToast('Không sao chép được.', 'error')
-    }
-  }, [pushToast])
-
-  const zoomIn = useCallback(() => setScale((s) => Math.min(3, Math.round((s * 1.15) * 1000) / 1000)), [])
-  const zoomOut = useCallback(() => setScale((s) => Math.max(0.35, Math.round((s / 1.15) * 1000) / 1000)), [])
-  const resetView = useCallback(() => {
-    setScale(1)
-    scrollViewportRef.current?.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
-  }, [])
+  const copySegmentToClipboard = useCallback(
+    async (seg: TimelineSegment) => {
+      const line = `${formatTime(seg.startSeconds)} — ${seg.label}`
+      try {
+        await navigator.clipboard.writeText(line)
+        etherWorkspaceToasts.copyMilestone()
+      } catch {
+        pushToast('Không sao chép được.', 'error')
+      }
+    },
+    [pushToast],
+  )
 
   const toggleDiagramTheme = useCallback(() => {
     setDiagramTheme((t) => (t === 'highContrast' ? 'softPastel' : 'highContrast'))
   }, [])
 
   const downloadPng = useCallback(async () => {
-    const node = containerRef.current
-    if (!node?.querySelector('svg')) {
+    const node = exportWrapRef.current
+    if (!node) {
       pushToast('Chưa có sơ đồ để xuất.', 'default')
       return
     }
@@ -192,127 +366,6 @@ export function MindmapPanel() {
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
-
-  useEffect(() => {
-    if (!mapVisible) return
-    let cancelled = false
-    let detachSvg: (() => void) | undefined
-
-    ;(async () => {
-      void diagramMotion.set({ opacity: 0, scale: 0.92 })
-      const mermaid = (await import('mermaid')).default
-      const cfg = MERMAID_THEME_CONFIG[diagramTheme]
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: 'loose',
-        theme: cfg.theme,
-        themeVariables: cfg.themeVariables,
-      })
-      const id = `mmd-${reactId}`
-      try {
-        const { svg } = await mermaid.render(id, DEMO_MERMAID)
-        if (cancelled || !containerRef.current) return
-        containerRef.current.innerHTML = svg
-        const root = containerRef.current
-        const svgEl = root.querySelector('svg')
-        if (svgEl) {
-          svgEl.setAttribute('role', 'img')
-          svgEl.querySelectorAll('g.node, g[class*="node"]').forEach((g) => {
-            const el = g as unknown as HTMLElement
-            el.style.cursor = 'pointer'
-            const label = extractMindmapNodeLabel(g)
-            if (label.length > 0) {
-              g.setAttribute('title', label)
-            }
-          })
-          svgEl.querySelectorAll('text').forEach((t) => {
-            const full = (t.textContent ?? '').trim()
-            if (full.length > 28) {
-              t.setAttribute('title', full)
-            }
-          })
-
-          const onSvgClick = (e: MouseEvent) => {
-            const t = e.target as Element | null
-            if (!t) return
-            const g = t.closest('g.node') ?? t.closest('g[class*="node"]')
-            if (!g) return
-            e.stopPropagation()
-            const label = extractMindmapNodeLabel(g)
-            const seconds = resolveSeekFromMindmapLabel(label)
-            if (seconds === null) {
-              useToastStore.getState().pushToast('Chưa có mốc thời gian cho nút mindmap này.', 'default')
-              return
-            }
-            const r = useWorkspaceStore.getState().requestSeek(seconds, `mmd-${label.slice(0, 48)}`)
-            if (!r.ok) useToastStore.getState().pushToast(r.message, 'error')
-          }
-          const onSvgContextMenu = (e: MouseEvent) => {
-            const t = e.target as Element | null
-            if (!t) return
-            const g = t.closest('g.node') ?? t.closest('g[class*="node"]')
-            if (!g) return
-            e.preventDefault()
-            e.stopPropagation()
-            const label = extractMindmapNodeLabel(g)
-            const range = resolveClipRangeFromMindmapLabel(label)
-            if (!range) {
-              useToastStore.getState().pushToast('Chưa gắn khoảng thời gian cho nút này.', 'default')
-              return
-            }
-            setMindContextMenu({
-              x: e.clientX,
-              y: e.clientY,
-              nodeLabel: label,
-              startSeconds: range.start,
-              endSeconds: range.end,
-            })
-          }
-          svgEl.addEventListener('click', onSvgClick)
-          svgEl.addEventListener('contextmenu', onSvgContextMenu)
-          detachSvg = () => {
-            svgEl.removeEventListener('click', onSvgClick)
-            svgEl.removeEventListener('contextmenu', onSvgContextMenu)
-          }
-          syncMindmapNodeCompletion(svgEl, useWorkspaceStore.getState().videoCurrentTimeSeconds)
-          if (!cancelled) {
-            etherWorkspaceToasts.diagramUpdated()
-          }
-        }
-        if (!cancelled) {
-          void diagramMotion.start({
-            opacity: 1,
-            scale: 1,
-            transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] },
-          })
-        }
-      } catch {
-        if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML =
-            '<p class="p-4 text-base text-ds-text-secondary md:text-sm">Mindmap preview unavailable.</p>'
-        }
-        if (!cancelled) {
-          void diagramMotion.start({
-            opacity: 1,
-            scale: 1,
-            transition: { duration: 0.25 },
-          })
-        }
-      }
-    })()
-
-    return () => {
-      cancelled = true
-      detachSvg?.()
-      diagramMotion.stop()
-    }
-  }, [diagramMotion, diagramTheme, reactId, mapVisible])
-
-  useEffect(() => {
-    const svg = containerRef.current?.querySelector('svg')
-    if (!svg) return
-    syncMindmapNodeCompletion(svg, videoCurrentTimeSeconds)
-  }, [videoCurrentTimeSeconds])
 
   const saveMindmapBookmark = useCallback(() => {
     if (!mindContextMenu) return
@@ -362,43 +415,15 @@ export function MindmapPanel() {
       <div
         ref={holderRef}
         className="relative z-10 flex min-h-[200px] flex-1 flex-col rounded-ds-sm"
-        aria-label="Mermaid mindmap"
+        aria-label="React Flow mindmap canvas"
         aria-busy={!mapVisible}
       >
         {mapVisible ? (
           <div
             className="absolute right-1 top-1 z-20 flex flex-wrap items-center justify-end gap-0.5 rounded-ds-sm border border-ds-border bg-ds-bg/90 p-1 shadow-ds-soft backdrop-blur-md"
             role="toolbar"
-            aria-label="Mindmap tools"
+            aria-label="Mindmap export & theme"
           >
-            <button
-              type="button"
-              onClick={zoomOut}
-              className="ds-interactive rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/40 hover:text-ds-text-primary"
-              aria-label="Thu nhỏ"
-              title="Thu nhỏ"
-            >
-              <ZoomOut className="h-4 w-4" strokeWidth={1.5} />
-            </button>
-            <button
-              type="button"
-              onClick={zoomIn}
-              className="ds-interactive rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/40 hover:text-ds-text-primary"
-              aria-label="Phóng to"
-              title="Phóng to"
-            >
-              <ZoomIn className="h-4 w-4" strokeWidth={1.5} />
-            </button>
-            <button
-              type="button"
-              onClick={resetView}
-              className="ds-interactive rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/40 hover:text-ds-text-primary"
-              aria-label="Đặt lại khung nhìn"
-              title="Đặt lại khung nhìn"
-            >
-              <RotateCcw className="h-4 w-4" strokeWidth={1.5} />
-            </button>
-            <span className="mx-0.5 h-5 w-px shrink-0 bg-ds-border" aria-hidden />
             <button
               type="button"
               onClick={downloadPng}
@@ -408,6 +433,7 @@ export function MindmapPanel() {
             >
               <Download className="h-4 w-4" strokeWidth={1.5} />
             </button>
+            <span className="mx-0.5 h-5 w-px shrink-0 bg-ds-border" aria-hidden />
             <button
               type="button"
               onClick={toggleDiagramTheme}
@@ -423,9 +449,7 @@ export function MindmapPanel() {
                   : 'Chuyển sang High Contrast'
               }
               title={
-                diagramTheme === 'highContrast'
-                  ? 'Theme: Soft Pastel'
-                  : 'Theme: High Contrast'
+                diagramTheme === 'highContrast' ? 'Theme: Soft Pastel' : 'Theme: High Contrast'
               }
             >
               {diagramTheme === 'highContrast' ? (
@@ -439,25 +463,23 @@ export function MindmapPanel() {
         {!mapVisible ? (
           <p className="p-4 text-sm text-ds-text-secondary">Đang tải sơ đồ…</p>
         ) : null}
-        <div
-          ref={scrollViewportRef}
-          className="min-h-0 flex-1 overflow-auto rounded-ds-sm bg-ds-bg/20 pt-10"
-        >
+        <div className="min-h-0 flex-1 overflow-hidden rounded-ds-sm pt-10">
           <motion.div
-            className="inline-block origin-top-left will-change-[opacity,transform]"
-            initial={false}
-            animate={diagramMotion}
+            className="h-full min-h-[300px] will-change-[opacity,transform]"
+            initial={{ opacity: 0, scale: 0.94 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
           >
-            <div
-              className="inline-block origin-top-left will-change-transform"
-              style={{ transform: `scale(${scale})` }}
-            >
-              <div
-                ref={containerRef}
-                data-mindmap-theme={diagramTheme}
-                className="mindmap-panel-svg text-ds-text-primary [&_svg]:max-w-none"
-              />
-            </div>
+            {mapVisible ? (
+              <ReactFlowProvider>
+                <MindmapFlowCanvas
+                  diagramTheme={diagramTheme}
+                  exportContainerRef={exportWrapRef}
+                  setMindContextMenu={setMindContextMenu}
+                  registerFocusSegment={registerFocusSegment}
+                />
+              </ReactFlowProvider>
+            ) : null}
           </motion.div>
         </div>
       </div>

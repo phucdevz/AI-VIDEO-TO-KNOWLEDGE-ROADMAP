@@ -1,3 +1,5 @@
+export { KnowledgePackExportMenu } from './KnowledgePackExportMenu'
+export { MindmapErrorBoundary } from './MindmapErrorBoundary'
 export { LearningProgressHud } from './LearningProgressHud'
 export { WorkspaceSkeleton } from './WorkspaceSkeleton'
 export { LearningProgressTrack } from './LearningProgressTrack'

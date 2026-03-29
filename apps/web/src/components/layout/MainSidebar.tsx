@@ -35,7 +35,7 @@ export function MainSidebar() {
     <aside
       id="main-navigation"
       className={[
-        'ds-surface-glass shadow-ds-soft fixed left-0 top-0 z-50 flex h-screen flex-col rounded-r-ds-lg border-r border-ds-border',
+        'ds-surface-glass shadow-ds-soft fixed left-0 top-0 z-[70] flex h-screen flex-col rounded-r-ds-lg border-r border-ds-border',
         'w-64 max-w-[min(100vw,20rem)] transition-transform duration-300 ease-out',
         'max-md:-translate-x-full',
         mobileNavOpen && 'max-md:translate-x-0',

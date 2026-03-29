@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactPlayer from 'react-player'
+import { validateSeekSeconds } from '../../lib/validateSeekSeconds'
 import { useMediaCommandStore } from '../../stores/useMediaCommandStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { LearningProgressTrack } from './LearningProgressTrack'
@@ -67,10 +68,20 @@ export function WorkspaceVideoPanel({
   useEffect(() => {
     if (seekToSeconds == null) return
     if (variant === 'placeholder') return
-    setVideoCurrentTimeSeconds(seekToSeconds)
+    const v = validateSeekSeconds(seekToSeconds)
+    if (!v.ok) {
+      clearSeekRequest()
+      return
+    }
+    const target = Math.max(0, seekToSeconds)
+    setVideoCurrentTimeSeconds(target)
     const p = playerRef.current
     if (p) {
-      p.seekTo(seekToSeconds, 'seconds')
+      try {
+        p.seekTo(target, 'seconds')
+      } catch {
+        /* iframe / YouTube API có thể từ chối seek tạm thời */
+      }
     }
     clearSeekRequest()
   }, [seekToSeconds, clearSeekRequest, setVideoCurrentTimeSeconds, variant])
@@ -78,7 +89,7 @@ export function WorkspaceVideoPanel({
   useEffect(() => {
     if (variant === 'placeholder') return
     if (clipLoopPlaybackPulse === 0) return
-    setPlaying(true)
+    queueMicrotask(() => setPlaying(true))
   }, [clipLoopPlaybackPulse, variant])
 
   const handleReady = () => {
@@ -203,7 +214,10 @@ export function WorkspaceVideoPanel({
           />
         </div>
       </div>
-      <p className={`mt-4 font-bold text-ds-text-primary ${compact ? 'text-sm' : 'text-sm'}`}>
+      <p
+        className={`mt-4 line-clamp-2 font-bold text-ds-text-primary ${compact ? 'text-sm' : 'text-sm'}`}
+        title={lectureTitle}
+      >
         {lectureTitle ? lectureTitle : 'Demo lecture (replace URL from pipeline)'}
       </p>
       {!compact && (

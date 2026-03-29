@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field, HttpUrl
 
 
@@ -5,10 +7,45 @@ class AudioExtractionRequest(BaseModel):
     url: HttpUrl = Field(..., description="YouTube (or yt-dlp supported) URL")
 
 
+class TranscriptSegmentSchema(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+class KnowledgeChunkSchema(BaseModel):
+    text: str
+    start_seconds: float
+    end_seconds: float
+    segment_indices: list[int] = Field(default_factory=list)
+
+
 class AudioExtractionResponse(BaseModel):
+    """Full Video → Knowledge pipeline result."""
+
     video_id: str
     title: str | None
     duration_seconds: float | None
+    source_url: str
     audio_filename: str
     audio_path: str = Field(..., description="Absolute path to downloaded audio on the API server")
     extractor: str = "yt-dlp"
+
+    transcription: dict[str, Any] = Field(
+        ...,
+        description="verbose_json-style payload: text, language, duration, segments[]",
+    )
+    knowledge_chunks: list[KnowledgeChunkSchema] = Field(
+        default_factory=list,
+        description="Semantic chunks for tutor RAG",
+    )
+    react_flow: dict[str, Any] = Field(
+        ...,
+        description="React Flow graph (nodes with data.timestamp, edges)",
+    )
+    quiz: dict[str, Any] = Field(..., description="Structured quiz for QuizCenter")
+    tutor: dict[str, Any] = Field(..., description="Summary + key points for Tutor sidebar")
+
+    persisted: bool = Field(False, description="Saved to Supabase lectures table")
+    lecture_id: str | None = Field(None, description="Supabase row id when persisted")
+    persist_message: str | None = Field(None, description="Error message when persist skipped/failed")

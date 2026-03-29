@@ -47,11 +47,11 @@ export function AnalyticsPage() {
       </header>
 
       <div className="grid gap-8 lg:grid-cols-12">
-        <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px] lg:col-span-7">
+        <section className="ds-surface-glass min-w-0 rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-[10px] sm:p-8 lg:col-span-7">
           <h3 className="text-lg font-bold text-ds-text-primary">Skill coverage</h3>
           <p className="mt-2 text-sm text-ds-text-secondary">Holistic proficiency (normalized 0–100)</p>
-          <div className="mt-8 h-[360px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="mt-8 h-[min(360px,70vw)] w-full min-h-[240px] min-w-0 sm:h-[320px] md:h-[360px]">
+            <ResponsiveContainer width="100%" height="100%" debounce={50}>
               <RadarChart cx="50%" cy="50%" outerRadius="78%" data={RADAR_DATA}>
                 <PolarGrid stroke="rgba(136, 146, 176, 0.25)" />
                 <PolarAngleAxis dataKey="skill" tick={{ fill: '#8892b0', fontSize: 12 }} />
@@ -84,9 +84,9 @@ export function AnalyticsPage() {
             {['Recursive thinking lab', 'Systems architecture primer', 'Memory retention quiz'].map((t) => (
               <li
                 key={t}
-                className="ds-transition flex items-center justify-between rounded-ds-sm border border-ds-border bg-ds-bg/40 px-4 py-4 hover:border-ds-primary/40"
+                className="ds-transition flex min-w-0 items-center justify-between gap-3 rounded-ds-sm border border-ds-border bg-ds-bg/40 px-4 py-4 hover:border-ds-primary/40"
               >
-                <span className="text-sm font-bold text-ds-text-primary">{t}</span>
+                <span className="min-w-0 text-sm font-bold text-ds-text-primary line-clamp-2">{t}</span>
                 <button
                   type="button"
                   className="ds-interactive rounded-ds-sm bg-ds-primary/80 px-4 py-2 text-xs font-bold text-ds-text-primary hover:bg-ds-primary"
