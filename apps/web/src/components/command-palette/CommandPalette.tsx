@@ -2,7 +2,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { BookOpen, ListChecks, Search, VolumeX } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { MOCK_LECTURES } from '../../data/lectures'
+import type { LibraryLectureRow } from '../../stores/useAppStore'
+import { useAppStore } from '../../stores/useAppStore'
 import { useMediaCommandStore } from '../../stores/useMediaCommandStore'
 
 type CommandDef = {
@@ -42,7 +43,7 @@ const COMMANDS: CommandDef[] = [
 ]
 
 type Row =
-  | { kind: 'lecture'; key: string; lecture: (typeof MOCK_LECTURES)[number] }
+  | { kind: 'lecture'; key: string; lecture: LibraryLectureRow }
   | { kind: 'command'; key: string; command: CommandDef }
 
 function commandMatchesQuery(c: CommandDef, q: string): boolean {
@@ -62,29 +63,27 @@ function commandMatchesQuery(c: CommandDef, q: string): boolean {
   )
 }
 
-function lectureMatchesQuery(
-  lecture: (typeof MOCK_LECTURES)[number],
-  q: string,
-): boolean {
+function lectureMatchesQuery(lecture: LibraryLectureRow, q: string): boolean {
   if (!q) return true
   const lower = q.trim().toLowerCase()
   if (lower.startsWith('/')) return false
   return (
-    lecture.title.toLowerCase().includes(lower) ||
-    lecture.course.toLowerCase().includes(lower) ||
+    (lecture.title ?? '').toLowerCase().includes(lower) ||
+    (lecture.source_url ?? '').toLowerCase().includes(lower) ||
+    (lecture.course ?? '').toLowerCase().includes(lower) ||
     lecture.id.includes(lower)
   )
 }
 
-function buildRows(query: string): Row[] {
+function buildRows(query: string, lectures: LibraryLectureRow[]): Row[] {
   const q = query.trim()
   const rows: Row[] = []
 
   if (!q.startsWith('/')) {
-    const lectures = MOCK_LECTURES.filter((l) => lectureMatchesQuery(l, q))
-    const limit = q ? lectures.length : Math.min(lectures.length, 8)
+    const filtered = lectures.filter((l) => lectureMatchesQuery(l, q))
+    const limit = q ? filtered.length : Math.min(filtered.length, 8)
     for (let i = 0; i < limit; i++) {
-      const l = lectures[i]
+      const l = filtered[i]
       if (l) rows.push({ kind: 'lecture', key: `lecture-${l.id}`, lecture: l })
     }
   }
@@ -110,7 +109,10 @@ export function CommandPalette() {
   const requestPlay = useMediaCommandStore((s) => s.requestPlay)
   const requestMuteToggle = useMediaCommandStore((s) => s.requestMuteToggle)
 
-  const rows = useMemo(() => buildRows(query), [query])
+  const libraryLectures = useAppStore((s) => s.libraryLectures)
+  const fetchLibraryLectures = useAppStore((s) => s.fetchLibraryLectures)
+
+  const rows = useMemo(() => buildRows(query, libraryLectures), [query, libraryLectures])
   const activeIndex = rows.length === 0 ? 0 : Math.min(Math.max(0, selected), rows.length - 1)
 
   const close = useCallback(() => {
@@ -178,6 +180,13 @@ export function CommandPalette() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [close, open])
+
+  useEffect(() => {
+    if (!open) return
+    if (libraryLectures.length > 0) return
+    // Khi user mở Ctrl+K lần đầu mà chưa vào Dashboard: chủ động fetch list lecture.
+    void fetchLibraryLectures()
+  }, [open, libraryLectures.length, fetchLibraryLectures])
 
   useEffect(() => {
     if (!open) return
@@ -295,10 +304,10 @@ export function CommandPalette() {
                             />
                             <span className="min-w-0 flex-1">
                               <span className="block text-sm font-bold text-ds-text-primary line-clamp-2">
-                                {lecture.title}
+                                {lecture.title ?? 'Untitled lecture'}
                               </span>
                               <span className="mt-0.5 block text-xs text-ds-text-secondary line-clamp-1">
-                                {lecture.course} · Mở workspace
+                                {(lecture.course ?? 'Library') + ' · Mở workspace'}
                               </span>
                             </span>
                           </button>

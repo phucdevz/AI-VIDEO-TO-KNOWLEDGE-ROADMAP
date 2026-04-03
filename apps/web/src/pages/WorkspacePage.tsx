@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Focus, Maximize2, Minimize2, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   KnowledgePackExportMenu,
   LearningProgressHud,
@@ -17,13 +17,39 @@ import {
 import { PageMeta, WorkspaceJsonLd } from '../components/seo'
 import { DEFAULT_TIMELINE_SEGMENTS, getLectureById } from '../data/lectures'
 import { postAudioExtraction } from '../lib/api'
+import { mapLectureRowToPipeline } from '../lib/mapLectureRowToPipeline'
+import { fetchLecturesRows, getSupabase } from '../lib/supabase'
 import { etherWorkspaceToasts } from '../lib/etherToast'
 import { lectureOgDescription, lectureOgTitle } from '../lib/lectureSeo'
 import { SITE_NAME } from '../lib/site'
+import { useAppStore } from '../stores/useAppStore'
+import { useAuthStore } from '../stores/useAuthStore'
 import { useToastStore } from '../stores/useToastStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
-const DEMO_VIDEO_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+function looksLikeUuid(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+}
+
+/** Chọn bài mới nhất có URL hoặc mindmap (danh sách đã order id desc). */
+function pickBestLectureRow(rows: Record<string, unknown>[]): Record<string, unknown> | null {
+  for (const row of rows) {
+    const url =
+      typeof row.video_url === 'string'
+        ? row.video_url.trim()
+        : typeof row.source_url === 'string'
+          ? row.source_url.trim()
+          : ''
+    const flow = row.flow_data
+    let nodeCount = 0
+    if (flow && typeof flow === 'object' && flow !== null && 'nodes' in flow) {
+      const nodes = (flow as { nodes?: unknown }).nodes
+      if (Array.isArray(nodes)) nodeCount = nodes.length
+    }
+    if (url.length > 0 || nodeCount > 0) return row
+  }
+  return null
+}
 
 type FullscreenPanel = 'video' | 'mindmap' | 'tutor'
 
@@ -82,17 +108,36 @@ export function WorkspacePage() {
   const lectureIdParam = searchParams.get('lecture')
   const lecture = getLectureById(lectureIdParam ?? undefined)
 
-  const resolvedId = lecture?.id ?? 'demo'
-  const resolvedTitle = lecture?.title ?? 'Bài giảng demo'
-  const resolvedCourse = lecture?.course ?? 'Demo'
+  const pipelineSourceUrl = useWorkspaceStore((s) => s.pipelineSourceUrl)
+  const pipelineVideoUrl = useWorkspaceStore((s) => s.pipelineVideoUrl)
+  const pipelineLectureId = useWorkspaceStore((s) => s.pipelineLectureId)
+  const pipelineLectureTitle = useWorkspaceStore((s) => s.pipelineLectureTitle)
+  const pipelineReactFlow = useWorkspaceStore((s) => s.pipelineReactFlow)
 
-  const metaPath =
-    lecture != null ? `/workspace?lecture=${encodeURIComponent(lecture.id)}` : '/workspace'
+  const hasPipelinePayload = useMemo(() => {
+    const u = (pipelineSourceUrl ?? pipelineVideoUrl ?? '').trim()
+    return u.length > 0 || (pipelineReactFlow?.nodes?.length ?? 0) > 0
+  }, [pipelineSourceUrl, pipelineVideoUrl, pipelineReactFlow])
 
-  const docTitle = `${lectureOgTitle(resolvedTitle)} | ${SITE_NAME}`
-  const metaDesc = lectureOgDescription(resolvedTitle, resolvedCourse)
+  const resolvedTitle = pipelineLectureTitle ?? lecture?.title ?? 'Bài giảng'
+  const resolvedCourse = lecture?.course ?? ''
+  const resolvedVideoUrl = (pipelineVideoUrl ?? pipelineSourceUrl ?? '').trim()
+  const finalLectureId = pipelineLectureId ?? lecture?.id ?? lectureIdParam ?? ''
 
-  const [isLoading, setIsLoading] = useState(true)
+  const metaPath = useMemo(() => {
+    const id = pipelineLectureId ?? lecture?.id
+    if (id && hasPipelinePayload) return `/workspace?lecture=${encodeURIComponent(id)}`
+    return '/workspace'
+  }, [pipelineLectureId, lecture?.id, hasPipelinePayload])
+
+  const docTitle = hasPipelinePayload
+    ? `${lectureOgTitle(resolvedTitle)} | ${SITE_NAME}`
+    : `Workspace | ${SITE_NAME}`
+  const metaDesc = hasPipelinePayload
+    ? lectureOgDescription(resolvedTitle, resolvedCourse || '—')
+    : `Không gian học tập — ${SITE_NAME}.`
+
+  const [hydrationReady, setHydrationReady] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [playerLayout, dispatchPlayerLayout] = useReducer(playerLayoutReducer, {
     stickyMini: false,
@@ -108,15 +153,19 @@ export function WorkspacePage() {
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel | null>(null)
   const pushToast = useToastStore((s) => s.pushToast)
   const mindmapHighlights = useWorkspaceStore((s) => s.mindmapHighlights)
+  const setPipelineResult = useWorkspaceStore((s) => s.setPipelineResult)
+  const authUser = useAuthStore((s) => s.user)
+  const language = useAppStore((s) => s.language)
+  const quizDifficulty = useAppStore((s) => s.quizDifficulty)
 
   const knowledgePackCtx = useMemo(
     () => ({
       lectureTitle: resolvedTitle,
       course: resolvedCourse,
-      lectureId: resolvedId,
+      lectureId: finalLectureId,
       highlights: mindmapHighlights,
     }),
-    [mindmapHighlights, resolvedCourse, resolvedId, resolvedTitle],
+    [mindmapHighlights, resolvedCourse, finalLectureId, resolvedTitle],
   )
 
   const onPlaybackProgress = useCallback((seconds: number) => {
@@ -132,22 +181,85 @@ export function WorkspacePage() {
     setKnowledgeProcessing(true)
     etherWorkspaceToasts.aiAnalysisStart()
     try {
-      await postAudioExtraction(DEMO_VIDEO_URL)
+      if (!pipelineSourceUrl) {
+        pushToast('Chưa có URL pipeline. Vui lòng quay lại Dashboard và chạy pipeline.', 'error')
+        return
+      }
+      const data = await postAudioExtraction(pipelineSourceUrl, authUser?.id ?? null, language, quizDifficulty)
+      useWorkspaceStore.getState().setPipelineResult(data)
       pushToast('Trích xuất thành công.', 'success')
     } catch {
       /* lỗi: toast từ interceptor Axios */
     } finally {
       setKnowledgeProcessing(false)
     }
-  }, [knowledgeProcessing, pushToast])
+  }, [knowledgeProcessing, pushToast, pipelineSourceUrl, authUser?.id, language, quizDifficulty])
 
   useEffect(() => {
-    const t = window.setTimeout(() => setIsLoading(false), 900)
-    return () => window.clearTimeout(t)
-  }, [])
+    let cancelled = false
+
+    async function hydrate() {
+      const store = useWorkspaceStore.getState()
+      const hasStore =
+        Boolean(store.pipelineSourceUrl?.trim() || store.pipelineVideoUrl?.trim()) ||
+        (store.pipelineReactFlow?.nodes?.length ?? 0) > 0
+
+      if (lectureIdParam && looksLikeUuid(lectureIdParam)) {
+        const supabase = getSupabase()
+        if (!supabase) {
+          if (!cancelled) setHydrationReady(true)
+          return
+        }
+        const { data } = await supabase.from('lectures').select('*').eq('id', lectureIdParam).maybeSingle()
+        if (cancelled) return
+        if (data) {
+          setPipelineResult(mapLectureRowToPipeline(data as Record<string, unknown>))
+        }
+        if (!cancelled) setHydrationReady(true)
+        return
+      }
+
+      if (lectureIdParam && getLectureById(lectureIdParam)) {
+        if (!cancelled) setHydrationReady(true)
+        return
+      }
+
+      if (hasStore) {
+        if (!cancelled) setHydrationReady(true)
+        return
+      }
+
+      const supabase = getSupabase()
+      const user = useAuthStore.getState().user
+      if (!supabase || !user?.id) {
+        if (!cancelled) setHydrationReady(true)
+        return
+      }
+
+      const { data, error } = await fetchLecturesRows(supabase, user.id)
+      if (cancelled) return
+      if (!error && data?.length) {
+        const row = pickBestLectureRow(data as Record<string, unknown>[])
+        if (row) {
+          const mapped = mapLectureRowToPipeline(row)
+          const hasUrl = Boolean(mapped.source_url?.trim())
+          const hasNodes = (mapped.react_flow?.nodes?.length ?? 0) > 0
+          if (hasUrl || hasNodes) {
+            setPipelineResult(mapped)
+          }
+        }
+      }
+      if (!cancelled) setHydrationReady(true)
+    }
+
+    void hydrate()
+    return () => {
+      cancelled = true
+    }
+  }, [lectureIdParam, setPipelineResult, authUser?.id])
 
   useEffect(() => {
-    if (isLoading) return
+    if (!hydrationReady) return
     const el = videoBlockRef.current
     if (!el) return
     const obs = new IntersectionObserver(
@@ -167,7 +279,7 @@ export function WorkspacePage() {
     )
     obs.observe(el)
     return () => obs.disconnect()
-  }, [isLoading])
+  }, [hydrationReady])
 
   useEffect(() => {
     return () => {
@@ -190,7 +302,8 @@ export function WorkspacePage() {
   }, [fullscreenPanel])
 
   const miniPortal =
-    !isLoading &&
+    hydrationReady &&
+    hasPipelinePayload &&
     fullscreenPanel !== 'video' &&
     typeof document !== 'undefined' &&
     createPortal(
@@ -206,7 +319,7 @@ export function WorkspacePage() {
           >
             <WorkspaceVideoPanel
               variant="mini"
-              videoUrl={DEMO_VIDEO_URL}
+              videoUrl={resolvedVideoUrl}
               lectureTitle={resolvedTitle}
               resumeAtSeconds={resumeAtSeconds}
               onPlaybackProgress={onPlaybackProgress}
@@ -224,18 +337,20 @@ export function WorkspacePage() {
         description={metaDesc}
         path={metaPath}
         documentTitle={docTitle}
-        ogTitle={lectureOgTitle(resolvedTitle)}
+        ogTitle={hasPipelinePayload ? lectureOgTitle(resolvedTitle) : 'Workspace'}
         ogDescription={metaDesc}
       />
-      <WorkspaceJsonLd
-        lectureId={resolvedId}
-        lectureTitle={resolvedTitle}
-        courseName={resolvedCourse}
-        videoUrl={DEMO_VIDEO_URL}
-        segments={DEFAULT_TIMELINE_SEGMENTS}
-      />
+      {hasPipelinePayload && resolvedVideoUrl ? (
+        <WorkspaceJsonLd
+          lectureId={finalLectureId || 'workspace'}
+          lectureTitle={resolvedTitle}
+          courseName={resolvedCourse || '—'}
+          videoUrl={resolvedVideoUrl}
+          segments={DEFAULT_TIMELINE_SEGMENTS}
+        />
+      ) : null}
       {miniPortal}
-      {!isLoading && fullscreenPanel == null && <LearningProgressHud />}
+      {hydrationReady && hasPipelinePayload && fullscreenPanel == null && <LearningProgressHud />}
 
       {typeof document !== 'undefined' &&
         createPortal(
@@ -257,10 +372,23 @@ export function WorkspacePage() {
           document.body,
         )}
 
-      {isLoading ? (
+      {!hydrationReady ? (
         <div className="relative isolate">
           <WorkspaceSkeleton />
           <ProcessingOverlay active />
+        </div>
+      ) : !hasPipelinePayload ? (
+        <div className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-5 px-4 py-16 text-center">
+          <p className="max-w-md text-sm leading-relaxed text-ds-text-secondary">
+            Chưa có dữ liệu pipeline. Khi bạn đã xử lý video hoặc có bài giảng đã lưu, nội dung sẽ hiển thị tại
+            đây — ưu tiên bài gần nhất.
+          </p>
+          <Link
+            to="/dashboard"
+            className="ds-interactive inline-flex items-center gap-2 rounded-ds-sm border border-ds-primary bg-ds-primary/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-ds-text-primary shadow-ds-soft transition-colors hover:border-ds-primary/80 hover:bg-ds-primary/25"
+          >
+            Về Dashboard
+          </Link>
         </div>
       ) : (
       <div className="flex min-h-[calc(100vh-4rem)] min-w-0 flex-col gap-3 overflow-x-clip overflow-y-auto px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4">
@@ -272,42 +400,45 @@ export function WorkspacePage() {
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
               transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 overflow-hidden"
+              className="flex w-full shrink-0 flex-wrap items-center justify-between gap-2 overflow-hidden"
             >
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  aria-busy={knowledgeProcessing}
+                  aria-pressed={knowledgeProcessing}
+                  disabled={knowledgeProcessing}
+                  onClick={() => void runExtraction()}
+                  className={`ds-interactive inline-flex items-center gap-2 rounded-ds-sm border px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-60 ${
+                    knowledgeProcessing
+                      ? 'border-ds-primary bg-ds-primary/20 text-ds-text-primary'
+                      : 'border-ds-border text-ds-text-secondary hover:border-ds-primary/40 hover:text-ds-text-primary'
+                  }`}
+                >
+                  <Sparkles className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+                  {knowledgeProcessing ? 'Đang trích xuất…' : 'Trích xuất'}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={focusMode}
+                  onClick={() => setFocusMode((v) => !v)}
+                  className={`ds-interactive inline-flex items-center gap-2 rounded-ds-sm border px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors ${
+                    focusMode
+                      ? 'border-ds-secondary bg-ds-secondary/15 text-ds-secondary'
+                      : 'border-ds-border text-ds-text-secondary hover:border-ds-secondary/40 hover:text-ds-text-primary'
+                  }`}
+                >
+                  <Focus className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+                  Focus
+                </button>
+              </div>
+
               <KnowledgePackExportMenu
                 ctx={knowledgePackCtx}
                 mindmapFilenameBase={resolvedTitle}
                 onError={(msg) => pushToast(msg, 'error')}
                 onSuccess={(msg) => pushToast(msg, 'default')}
               />
-              <button
-                type="button"
-                aria-busy={knowledgeProcessing}
-                aria-pressed={knowledgeProcessing}
-                disabled={knowledgeProcessing}
-                onClick={() => void runExtraction()}
-                className={`ds-interactive inline-flex items-center gap-2 rounded-ds-sm border px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors disabled:pointer-events-none disabled:opacity-60 ${
-                  knowledgeProcessing
-                    ? 'border-ds-primary bg-ds-primary/20 text-ds-text-primary'
-                    : 'border-ds-border text-ds-text-secondary hover:border-ds-primary/40 hover:text-ds-text-primary'
-                }`}
-              >
-                <Sparkles className="h-4 w-4" strokeWidth={1.5} aria-hidden />
-                {knowledgeProcessing ? 'Đang trích xuất…' : 'Trích xuất (demo)'}
-              </button>
-              <button
-                type="button"
-                aria-pressed={focusMode}
-                onClick={() => setFocusMode((v) => !v)}
-                className={`ds-interactive inline-flex items-center gap-2 rounded-ds-sm border px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors ${
-                  focusMode
-                    ? 'border-ds-secondary bg-ds-secondary/15 text-ds-secondary'
-                    : 'border-ds-border text-ds-text-secondary hover:border-ds-secondary/40 hover:text-ds-text-primary'
-                }`}
-              >
-                <Focus className="h-4 w-4" strokeWidth={1.5} aria-hidden />
-                Focus mode
-              </button>
               {stickyMini && (
                 <span className="text-[11px] font-normal text-ds-text-secondary max-sm:hidden">
                   Mini-player: cuộn lên để xem trong cột
@@ -360,7 +491,7 @@ export function WorkspacePage() {
             >
               <WorkspaceVideoPanel
                 variant={fullscreenPanel === 'video' ? 'inline' : stickyMini ? 'placeholder' : 'inline'}
-                videoUrl={DEMO_VIDEO_URL}
+                videoUrl={resolvedVideoUrl}
                 lectureTitle={resolvedTitle}
                 resumeAtSeconds={resumeAtSeconds}
                 onPlaybackProgress={onPlaybackProgress}
@@ -385,15 +516,14 @@ export function WorkspacePage() {
             }
             aria-labelledby="workspace-mindmap-title"
           >
-            <PanelFullscreenControl
-              panel="mindmap"
-              fullscreenPanel={fullscreenPanel}
-              setFullscreen={setFullscreenPanel}
-              className="top-14 sm:top-12"
-            />
             <div className={fullscreenPanel === 'mindmap' ? 'flex min-h-0 flex-1 flex-col' : 'contents'}>
               <MindmapErrorBoundary>
-                <MindmapPanel />
+                <MindmapPanel
+                  isFullscreen={fullscreenPanel === 'mindmap'}
+                  onToggleFullscreen={() =>
+                    setFullscreenPanel(fullscreenPanel === 'mindmap' ? null : 'mindmap')
+                  }
+                />
               </MindmapErrorBoundary>
             </div>
           </motion.section>

@@ -5,6 +5,22 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class AudioExtractionRequest(BaseModel):
     url: HttpUrl = Field(..., description="YouTube (or yt-dlp supported) URL")
+    user_id: str | None = Field(
+        default=None,
+        description="Optional Supabase auth user id; stored on lecture row for RLS / library scope",
+    )
+    target_lang: str | None = Field(
+        default="vi",
+        description="Target language for AI outputs: 'vi' or 'en'. Defaults to 'vi'.",
+    )
+    quiz_difficulty: str | None = Field(
+        default="medium",
+        description="Quiz difficulty: 'easy' | 'medium' | 'hard'. Controls quiz complexity and question count.",
+    )
+    force: bool = Field(
+        default=False,
+        description="When true, bypass Supabase cache and regenerate pipeline outputs.",
+    )
 
 
 class TranscriptSegmentSchema(BaseModel):
@@ -47,5 +63,8 @@ class AudioExtractionResponse(BaseModel):
     tutor: dict[str, Any] = Field(..., description="Summary + key points for Tutor sidebar")
 
     persisted: bool = Field(False, description="Saved to Supabase lectures table")
-    lecture_id: str | None = Field(None, description="Supabase row id when persisted")
+    lecture_id: str | None = Field(
+        None,
+        description="Supabase lectures.id: set when placeholder upsert succeeds (Realtime) and/or final save",
+    )
     persist_message: str | None = Field(None, description="Error message when persist skipped/failed")

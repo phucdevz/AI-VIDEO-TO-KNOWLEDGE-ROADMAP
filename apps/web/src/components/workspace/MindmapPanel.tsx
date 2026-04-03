@@ -11,21 +11,11 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { motion } from 'framer-motion'
-import { Contrast, Copy, Download, Maximize2, Palette, ZoomIn, ZoomOut } from 'lucide-react'
+import { Contrast, Copy, Download, Map, Maximize2, Minimize2, Palette, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { toPng } from 'html-to-image'
-import type { TimelineSegment } from '../../data/lectures'
-import { DEFAULT_TIMELINE_SEGMENTS } from '../../data/lectures'
-import {
-  collectMindmapLabels,
-  DEMO_WORKSPACE_MINDMAP_TREE,
-  getNeuralLedEdgeIds,
-  mindmapTreeToReactFlow,
-  type MindmapDiagramTheme,
-  type NeuralFlowGraphEdge,
-  type NeuralFlowGraphNode,
-} from '../../lib/mindmapToReactFlow'
+import type { MindmapDiagramTheme, NeuralFlowGraphEdge, NeuralFlowGraphNode } from '../../lib/mindmapToReactFlow'
 import {
   resolveClipRangeFromMindmapLabel,
   resolveSeekFromMindmapLabel,
@@ -58,50 +48,123 @@ type MindContextMenuState = {
   endSeconds: number
 } | null
 
+type DeepTimeLink = {
+  id: string
+  startSeconds: number
+  endSeconds: number
+  label: string
+  kind: 'chunk' | 'segment'
+}
+
 function MindmapFlowCanvas({
   diagramTheme,
   exportContainerRef,
   setMindContextMenu,
   registerFocusSegment,
+  showMiniMap,
 }: {
   diagramTheme: MindmapDiagramTheme
   exportContainerRef: MutableRefObject<HTMLDivElement | null>
   setMindContextMenu: Dispatch<SetStateAction<MindContextMenuState>>
   registerFocusSegment: (fn: (segmentId: string) => void) => void
+  showMiniMap: boolean
 }) {
   const notifiedRef = useRef(false)
   const { fitView, zoomIn, zoomOut } = useReactFlow()
 
-  const labels = useMemo(() => collectMindmapLabels(DEMO_WORKSPACE_MINDMAP_TREE), [])
-  const { nodes: seedNodes, edges: seedEdges } = useMemo(
-    () => mindmapTreeToReactFlow(DEMO_WORKSPACE_MINDMAP_TREE, diagramTheme),
-    [diagramTheme],
-  )
+  const pipelineReactFlow = useWorkspaceStore((s) => s.pipelineReactFlow)
+  const transcriptSegments = useWorkspaceStore((s) => s.transcriptSegments)
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<NeuralFlowGraphNode>(seedNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState<NeuralFlowGraphEdge>(seedEdges)
+  const [nodes, setNodes, onNodesChange] = useNodesState<NeuralFlowGraphNode>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<NeuralFlowGraphEdge>([])
 
   useEffect(() => {
-    const { nodes: n, edges: e } = mindmapTreeToReactFlow(DEMO_WORKSPACE_MINDMAP_TREE, diagramTheme)
-    setNodes(n)
-    setEdges(e)
-  }, [diagramTheme, setNodes, setEdges])
+    if (pipelineReactFlow?.nodes?.length && pipelineReactFlow?.edges?.length) {
+      const rawNodes = pipelineReactFlow.nodes as unknown as NeuralFlowGraphNode[]
+      const rawEdges = pipelineReactFlow.edges as unknown as NeuralFlowGraphEdge[]
+
+      // Sanitize graph to avoid ReactFlow crashes on long/dirty payloads.
+      const safeNodes = (Array.isArray(rawNodes) ? rawNodes : [])
+        .filter((n) => n && typeof n === 'object' && typeof (n as any).id === 'string')
+        .slice(0, 1200)
+        .map((n) => {
+          const pos = (n as any).position ?? {}
+          const x = Number(pos.x)
+          const y = Number(pos.y)
+          const data = (n as any).data ?? {}
+          const ts = Number(data.timestamp)
+          return {
+            ...(n as any),
+            position: {
+              x: Number.isFinite(x) ? x : 0,
+              y: Number.isFinite(y) ? y : 0,
+            },
+            data: {
+              ...data,
+              timestamp: Number.isFinite(ts) ? ts : 0,
+            },
+          } as NeuralFlowGraphNode
+        })
+
+      const nodeIds = new Set(safeNodes.map((n) => n.id))
+      const safeEdges = (Array.isArray(rawEdges) ? rawEdges : [])
+        .filter((e) => e && typeof e === 'object')
+        .filter((e) => typeof (e as any).source === 'string' && typeof (e as any).target === 'string')
+        .filter((e) => nodeIds.has((e as any).source) && nodeIds.has((e as any).target))
+        .slice(0, 2000)
+        .map((e) => ({ ...(e as any) })) as NeuralFlowGraphEdge[]
+
+      setNodes(safeNodes)
+      setEdges(safeEdges)
+      // Wait for React Flow to apply new elements, then fit for a good first view.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => fitView({ padding: 0.22, duration: 0 }))
+      })
+      return
+    }
+    setNodes([])
+    setEdges([])
+  }, [pipelineReactFlow, diagramTheme, setNodes, setEdges, fitView])
 
   const videoCurrentTimeSeconds = useWorkspaceStore((s) => s.videoCurrentTimeSeconds)
 
-  const ledEdgeIds = useMemo(
-    () => getNeuralLedEdgeIds(videoCurrentTimeSeconds, labels),
-    [labels, videoCurrentTimeSeconds],
-  )
-
   useEffect(() => {
-    setEdges((eds) =>
-      eds.map((e) => ({
-        ...e,
-        data: { ...e.data, active: ledEdgeIds.has(e.id) },
-      })),
-    )
-  }, [ledEdgeIds, setEdges])
+    const nodesWithTs = nodes.filter((n) => {
+      const ts = (n.data as any)?.timestamp
+      return typeof ts === 'number' && Number.isFinite(ts)
+    })
+    if (nodesWithTs.length === 0) return
+
+    // Choose the node whose timestamp is closest to current playback time.
+    let bestNode = nodesWithTs[0]
+    let bestDist = Math.abs(videoCurrentTimeSeconds - ((bestNode.data as any)?.timestamp as number))
+    for (const n of nodesWithTs) {
+      const ts = (n.data as any)?.timestamp as number
+      const d = Math.abs(videoCurrentTimeSeconds - ts)
+      if (d < bestDist) {
+        bestDist = d
+        bestNode = n
+      }
+    }
+    const activeNodeId = bestNode.id
+    const activeEdgeIds = new Set(edges.filter((e) => e.target === activeNodeId).map((e) => e.id))
+
+    // Update edge.data.active only if it actually changed to avoid render loops.
+    setEdges((eds) => {
+      let changed = false
+      const next = eds.map((e) => {
+        const shouldBeActive = activeEdgeIds.has(e.id)
+        const prevActive = Boolean((e.data as any)?.active)
+        if (shouldBeActive === prevActive) return e
+        changed = true
+        return {
+          ...e,
+          data: { ...(e.data as any), active: shouldBeActive },
+        }
+      })
+      return changed ? next : eds
+    })
+  }, [videoCurrentTimeSeconds, nodes, edges, setEdges])
 
   const requestSeek = useWorkspaceStore((s) => s.requestSeek)
   const pushToast = useToastStore((s) => s.pushToast)
@@ -124,15 +187,25 @@ function MindmapFlowCanvas({
   }, [focusSegmentOnCanvas, registerFocusSegment])
 
   const onInit = useCallback(() => {
-    fitView({ padding: 0.22, duration: 0 })
-    if (!notifiedRef.current) {
-      notifiedRef.current = true
-      etherWorkspaceToasts.diagramUpdated()
+    if (nodes.length > 0) {
+      fitView({ padding: 0.22, duration: 0 })
+      if (!notifiedRef.current) {
+        notifiedRef.current = true
+        etherWorkspaceToasts.diagramUpdated()
+      }
     }
-  }, [fitView])
+  }, [fitView, nodes.length])
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: NeuralFlowGraphNode) => {
+      const ts = (node.data as any)?.timestamp
+      if (typeof ts === 'number' && Number.isFinite(ts)) {
+        const r = requestSeek(ts, `flow-${node.id}`)
+        if (!r.ok) pushToast(r.message, 'error')
+        return
+      }
+
+      // Fallback: if backend node doesn't provide timestamp, try demo label mapping.
       const label = String(node.data.label ?? '')
       const seconds = resolveSeekFromMindmapLabel(label)
       if (seconds === null) {
@@ -148,7 +221,34 @@ function MindmapFlowCanvas({
   const onNodeContextMenu = useCallback(
     (e: React.MouseEvent, node: NeuralFlowGraphNode) => {
       e.preventDefault()
+
       const label = String(node.data.label ?? '')
+      const ts = (node.data as any)?.timestamp
+      if (typeof ts === 'number' && Number.isFinite(ts) && transcriptSegments.length > 0) {
+        // Prefer the segment that contains the timestamp.
+        const seg =
+          transcriptSegments.find((s) => ts >= s.start && ts <= s.end) ??
+          transcriptSegments.reduce((best, s) => {
+            const bestMid = (best.start + best.end) / 2
+            const mid = (s.start + s.end) / 2
+            return Math.abs(ts - mid) < Math.abs(ts - bestMid) ? s : best
+          })
+
+        const start = Number.isFinite(seg.start) ? seg.start : ts
+        const end0 = Number.isFinite(seg.end) ? seg.end : ts
+        let end = end0
+        if (end <= start) end = start + 0.25 // small safe window
+
+        setMindContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          nodeLabel: label,
+          startSeconds: start,
+          endSeconds: end,
+        })
+        return
+      }
+
       const range = resolveClipRangeFromMindmapLabel(label)
       if (!range) {
         useToastStore.getState().pushToast('Chưa gắn khoảng thời gian cho nút này.', 'default')
@@ -162,7 +262,7 @@ function MindmapFlowCanvas({
         endSeconds: range.end,
       })
     },
-    [setMindContextMenu],
+    [setMindContextMenu, transcriptSegments],
   )
 
   const onPaneClick = useCallback(
@@ -219,16 +319,18 @@ function MindmapFlowCanvas({
           color="#102038"
           variant={BackgroundVariant.Dots}
         />
-        <MiniMap
-          position="bottom-left"
-          pannable
-          zoomable
-          className="ds-surface-glass !m-3 !overflow-hidden rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px]"
-          maskColor="rgba(10, 25, 47, 0.5)"
-          nodeStrokeWidth={2}
-          nodeStrokeColor="#7c4dff"
-          nodeColor={() => 'rgba(124, 77, 255, 0.32)'}
-        />
+        {showMiniMap ? (
+          <MiniMap
+            position="bottom-left"
+            pannable
+            zoomable
+            className="ds-surface-glass !m-3 !overflow-hidden rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px]"
+            maskColor="rgba(10, 25, 47, 0.5)"
+            nodeStrokeWidth={2}
+            nodeStrokeColor="#7c4dff"
+            nodeColor={() => 'rgba(124, 77, 255, 0.32)'}
+          />
+        ) : null}
         <Controls
           position="top-right"
           showZoom={false}
@@ -256,7 +358,7 @@ function MindmapFlowCanvas({
           <ControlButton
             onClick={() => fitView({ padding: 0.22, duration: 220 })}
             className={controlBtnClass}
-            title="Vừa khung (hoặc double-click canvas)"
+            title="Vừa khung"
             aria-label="Vừa khung"
           >
             <Maximize2 className="h-4 w-4" strokeWidth={1.5} />
@@ -270,37 +372,171 @@ function MindmapFlowCanvas({
 /**
  * React Flow infinite canvas + deep time-links (seeks video via Zustand).
  */
-export function MindmapPanel() {
+export function MindmapPanel({
+  isFullscreen = false,
+  onToggleFullscreen,
+}: {
+  isFullscreen?: boolean
+  onToggleFullscreen?: () => void
+}) {
   const holderRef = useRef<HTMLDivElement>(null)
   const exportWrapRef = useRef<HTMLDivElement>(null)
   const focusSegmentRef = useRef<(segmentId: string) => void>(() => {})
   const [mapVisible, setMapVisible] = useState(false)
   const [diagramTheme, setDiagramTheme] = useState<MindmapDiagramTheme>('highContrast')
   const [mindContextMenu, setMindContextMenu] = useState<MindContextMenuState>(null)
+  const [showMiniMap, setShowMiniMap] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    try {
+      return window.localStorage.getItem('etherai:workspace-mindmap-minimap-v1') !== '0'
+    } catch {
+      return true
+    }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('etherai:workspace-mindmap-minimap-v1', showMiniMap ? '1' : '0')
+    } catch {
+      // ignore (private mode / blocked storage)
+    }
+  }, [showMiniMap])
 
   const registerFocusSegment = useCallback((fn: (segmentId: string) => void) => {
     focusSegmentRef.current = fn
   }, [])
 
   const requestSeek = useWorkspaceStore((s) => s.requestSeek)
+  const transcriptSegments = useWorkspaceStore((s) => s.transcriptSegments)
+  const knowledgeChunks = useWorkspaceStore((s) => s.knowledgeChunks)
   const addMindmapHighlight = useWorkspaceStore((s) => s.addMindmapHighlight)
   const activeSegmentId = useWorkspaceStore((s) => s.activeSegmentId)
   const pushToast = useToastStore((s) => s.pushToast)
 
+  const deepTimeLinks = useMemo<DeepTimeLink[]>(() => {
+    const cleanText = (t: string) => t.replace(/\s+/g, ' ').trim()
+    const titleFromText = (t: string) => {
+      const s = cleanText(t)
+      if (!s) return '—'
+      const firstSentence = s.split(/[.!?。！？]/)[0] ?? s
+      const base = cleanText(firstSentence)
+      return base.length > 62 ? `${base.slice(0, 62)}…` : base
+    }
+
+    // Prefer semantic chunks (they already represent "meaningful" spans).
+    const chunks = knowledgeChunks
+      .filter((c) => Number.isFinite(c.start_seconds) && Number.isFinite(c.end_seconds) && c.end_seconds > c.start_seconds)
+      .filter((c) => c.text.trim().length > 0)
+      .slice(0, 220)
+
+    if (chunks.length > 0) {
+      const totalDuration = Math.max(...chunks.map((c) => c.end_seconds))
+      const target = Math.max(10, Math.min(22, Math.round(totalDuration / 210))) // ~1 link / 3.5 minutes
+
+      // Spread across time: pick best chunk per bin using a simple score (length + segment coverage).
+      const bins = Math.max(6, Math.min(14, Math.round(totalDuration / 480)))
+      const perBin: { best: (typeof chunks)[number] | null; bestScore: number }[] = Array.from({ length: bins }).map(() => ({
+        best: null,
+        bestScore: -1,
+      }))
+      for (const c of chunks) {
+        const mid = (c.start_seconds + c.end_seconds) / 2
+        const b = Math.min(bins - 1, Math.max(0, Math.floor((mid / Math.max(1, totalDuration)) * bins)))
+        const lenScore = Math.min(1, c.text.length / 520)
+        const spanScore = Math.min(1, (c.end_seconds - c.start_seconds) / 120)
+        const segScore = Array.isArray(c.segment_indices) ? Math.min(1, c.segment_indices.length / 8) : 0.2
+        const score = lenScore * 0.55 + spanScore * 0.25 + segScore * 0.2
+        if (score > perBin[b]!.bestScore) {
+          perBin[b] = { best: c, bestScore: score }
+        }
+      }
+
+      const picked = perBin
+        .map((x) => x.best)
+        .filter(Boolean) as (typeof chunks)[number][]
+
+      // If we still have fewer than target, fill with remaining best-scored chunks.
+      const pickedSet = new Set(picked.map((c) => `${Math.round(c.start_seconds)}-${Math.round(c.end_seconds)}`))
+      if (picked.length < target) {
+        const rest = chunks
+          .filter((c) => !pickedSet.has(`${Math.round(c.start_seconds)}-${Math.round(c.end_seconds)}`))
+          .map((c) => {
+            const lenScore = Math.min(1, c.text.length / 520)
+            const spanScore = Math.min(1, (c.end_seconds - c.start_seconds) / 120)
+            const segScore = Array.isArray(c.segment_indices) ? Math.min(1, c.segment_indices.length / 8) : 0.2
+            const score = lenScore * 0.55 + spanScore * 0.25 + segScore * 0.2
+            return { c, score }
+          })
+          .sort((a, b) => b.score - a.score)
+          .slice(0, target - picked.length)
+          .map((x) => x.c)
+        picked.push(...rest)
+      }
+
+      // Sort by time and de-dup close starts.
+      picked.sort((a, b) => a.start_seconds - b.start_seconds)
+      const out: DeepTimeLink[] = []
+      let lastStart = -999
+      for (const c of picked) {
+        if (Math.abs(c.start_seconds - lastStart) < 10) continue
+        out.push({
+          id: `tl-ch-${Math.round(c.start_seconds * 10)}`,
+          startSeconds: c.start_seconds,
+          endSeconds: c.end_seconds,
+          label: titleFromText(c.text),
+          kind: 'chunk',
+        })
+        lastStart = c.start_seconds
+      }
+      return out.slice(0, target)
+    }
+
+    // Fallback: transcript segments (spread across timeline)
+    const segs = transcriptSegments
+      .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start && s.text.trim().length > 0)
+      .slice(0, 5000)
+    if (segs.length === 0) return []
+    const totalDuration = Math.max(...segs.map((s) => s.end))
+    const target = Math.max(8, Math.min(16, Math.round(totalDuration / 210)))
+    const n = Math.min(target, segs.length)
+    const pickIdx = new Set<number>()
+    for (let i = 0; i < n; i += 1) {
+      const idx = Math.round((i * (segs.length - 1)) / Math.max(1, n - 1))
+      pickIdx.add(idx)
+    }
+    const picked = Array.from(pickIdx)
+      .sort((a, b) => a - b)
+      .map((idx) => segs[idx]!)
+      .map((s, i) => ({
+        id: `tl-seg-${Math.round(s.start * 10)}-${i}`,
+        startSeconds: s.start,
+        endSeconds: s.end,
+        label: titleFromText(s.text),
+        kind: 'segment',
+      }))
+    const out: DeepTimeLink[] = []
+    let lastStart = -999
+    for (const p of picked) {
+      if (Math.abs(p.startSeconds - lastStart) < 8) continue
+      out.push(p)
+      lastStart = p.startSeconds
+    }
+    return out
+  }, [transcriptSegments, knowledgeChunks])
+
   const onDeepTimeLinkClick = useCallback(
-    (seg: TimelineSegment) => {
+    (seg: DeepTimeLink) => {
       const r = requestSeek(seg.startSeconds, seg.id)
       if (!r.ok) {
         pushToast(r.message, 'error')
         return
       }
-      focusSegmentRef.current(seg.id)
     },
     [pushToast, requestSeek],
   )
 
   const copySegmentToClipboard = useCallback(
-    async (seg: TimelineSegment) => {
+    async (seg: DeepTimeLink) => {
       const line = `${formatTime(seg.startSeconds)} — ${seg.label}`
       try {
         await navigator.clipboard.writeText(line)
@@ -409,25 +645,51 @@ export function MindmapPanel() {
           </p>
         </div>
       ) : null}
-      <h2 id="workspace-mindmap-title" className="ds-text-label mb-4 text-ds-secondary">
-        Neural map
-      </h2>
-      <div
-        ref={holderRef}
-        className="relative z-10 flex min-h-[200px] flex-1 flex-col rounded-ds-sm"
-        aria-label="React Flow mindmap canvas"
-        aria-busy={!mapVisible}
-      >
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2
+          id="workspace-mindmap-title"
+          className="ds-text-label min-w-0 flex-1 truncate text-ds-secondary"
+        >
+          Neural map
+        </h2>
         {mapVisible ? (
           <div
-            className="absolute right-1 top-1 z-20 flex flex-wrap items-center justify-end gap-0.5 rounded-ds-sm border border-ds-border bg-ds-bg/90 p-1 shadow-ds-soft backdrop-blur-md"
+            className="flex shrink-0 flex-nowrap items-center justify-end gap-0.5 rounded-ds-sm border border-ds-border bg-ds-bg/70 p-1 shadow-ds-soft backdrop-blur-md"
             role="toolbar"
-            aria-label="Mindmap export & theme"
+            aria-label="Mindmap tools"
           >
+            {onToggleFullscreen ? (
+              <button
+                type="button"
+                onClick={onToggleFullscreen}
+                aria-pressed={isFullscreen}
+                className="ds-interactive shrink-0 rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/40 hover:text-ds-text-primary"
+                aria-label={isFullscreen ? 'Thu nhỏ (Esc)' : 'Toàn màn hình'}
+                title={isFullscreen ? 'Thu nhỏ (Esc)' : 'Toàn màn hình'}
+              >
+                {isFullscreen ? (
+                  <Minimize2 className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+                ) : (
+                  <Maximize2 className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+                )}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setShowMiniMap((v) => !v)}
+              aria-pressed={showMiniMap}
+              className={`ds-interactive shrink-0 rounded-ds-sm p-2 hover:bg-ds-border/40 ${
+                showMiniMap ? 'text-ds-secondary' : 'text-ds-text-secondary hover:text-ds-text-primary'
+              }`}
+              aria-label={showMiniMap ? 'Ẩn MiniMap' : 'Hiện MiniMap'}
+              title={showMiniMap ? 'Ẩn MiniMap' : 'Hiện MiniMap'}
+            >
+              <Map className="h-4 w-4" strokeWidth={1.5} />
+            </button>
             <button
               type="button"
               onClick={downloadPng}
-              className="ds-interactive rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/40 hover:text-ds-text-primary"
+              className="ds-interactive shrink-0 rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/40 hover:text-ds-text-primary"
               aria-label="Tải PNG"
               title="Tải PNG"
             >
@@ -438,7 +700,7 @@ export function MindmapPanel() {
               type="button"
               onClick={toggleDiagramTheme}
               aria-pressed={diagramTheme === 'softPastel'}
-              className={`ds-interactive rounded-ds-sm p-2 hover:bg-ds-border/40 ${
+              className={`ds-interactive shrink-0 rounded-ds-sm p-2 hover:bg-ds-border/40 ${
                 diagramTheme === 'softPastel'
                   ? 'text-ds-secondary'
                   : 'text-ds-text-secondary hover:text-ds-text-primary'
@@ -448,9 +710,7 @@ export function MindmapPanel() {
                   ? 'Chuyển sang Soft Pastel'
                   : 'Chuyển sang High Contrast'
               }
-              title={
-                diagramTheme === 'highContrast' ? 'Theme: Soft Pastel' : 'Theme: High Contrast'
-              }
+              title={diagramTheme === 'highContrast' ? 'Theme: Soft Pastel' : 'Theme: High Contrast'}
             >
               {diagramTheme === 'highContrast' ? (
                 <Palette className="h-4 w-4" strokeWidth={1.5} />
@@ -460,10 +720,17 @@ export function MindmapPanel() {
             </button>
           </div>
         ) : null}
+      </div>
+      <div
+        ref={holderRef}
+        className="relative z-10 flex min-h-[200px] flex-1 flex-col rounded-ds-sm"
+        aria-label="React Flow mindmap canvas"
+        aria-busy={!mapVisible}
+      >
         {!mapVisible ? (
           <p className="p-4 text-sm text-ds-text-secondary">Đang tải sơ đồ…</p>
         ) : null}
-        <div className="min-h-0 flex-1 overflow-hidden rounded-ds-sm pt-10">
+        <div className="min-h-0 flex-1 overflow-hidden rounded-ds-sm pt-2">
           <motion.div
             className="h-full min-h-[300px] will-change-[opacity,transform]"
             initial={{ opacity: 0, scale: 0.94 }}
@@ -477,6 +744,7 @@ export function MindmapPanel() {
                   exportContainerRef={exportWrapRef}
                   setMindContextMenu={setMindContextMenu}
                   registerFocusSegment={registerFocusSegment}
+                  showMiniMap={showMiniMap}
                 />
               </ReactFlowProvider>
             ) : null}
@@ -485,8 +753,14 @@ export function MindmapPanel() {
       </div>
       <div className="relative z-10 mt-4 space-y-2 border-t border-ds-border pt-4">
         <h3 className="ds-text-label text-ds-text-secondary">Deep time-links</h3>
-        <ul className="flex flex-col gap-2">
-          {DEFAULT_TIMELINE_SEGMENTS.map((seg) => (
+        <div className="max-h-[9.5rem] overflow-y-auto pr-1">
+          <ul className="flex flex-col gap-2">
+          {deepTimeLinks.length === 0 ? (
+            <li className="rounded-ds-sm border border-ds-border bg-ds-bg/40 px-4 py-3 text-sm text-ds-text-secondary">
+              Chưa có transcript segments để tạo time-links. Hãy chạy pipeline để nạp transcript.
+            </li>
+          ) : null}
+          {deepTimeLinks.map((seg) => (
             <li key={seg.id} className="flex items-stretch gap-1">
               <button
                 type="button"
@@ -501,7 +775,12 @@ export function MindmapPanel() {
                 <span className="shrink-0 font-mono text-ds-secondary tabular-nums">
                   {formatTime(seg.startSeconds)}
                 </span>
-                <span className="min-w-0 flex-1 line-clamp-2">{seg.label}</span>
+                <span className="min-w-0 flex-1 line-clamp-2">
+                  {seg.label}
+                  <span className="ml-2 text-[11px] font-bold uppercase tracking-wider text-ds-text-secondary">
+                    {seg.kind === 'chunk' ? 'chunk' : 'seg'}
+                  </span>
+                </span>
               </button>
               <button
                 type="button"
@@ -514,7 +793,8 @@ export function MindmapPanel() {
               </button>
             </li>
           ))}
-        </ul>
+          </ul>
+        </div>
       </div>
     </div>
   )

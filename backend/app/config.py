@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     google_api_key: str | None = None
     supabase_url: str | None = None
     supabase_key: str | None = None
+    # AI provider preference: "auto" (default), "groq", or "google".
+    ai_provider: str = "auto"
 
     @property
     def cors_origin_list(self) -> list[str]:

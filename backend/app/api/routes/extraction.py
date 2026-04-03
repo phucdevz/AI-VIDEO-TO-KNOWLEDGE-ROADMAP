@@ -25,7 +25,13 @@ async def extract_audio(
 ) -> AudioExtractionResponse:
     url = str(body.url)
     try:
-        return await run_full_extraction_pipeline(url)
+        return await run_full_extraction_pipeline(
+            url,
+            user_id=body.user_id,
+            target_lang=body.target_lang,
+            quiz_difficulty=body.quiz_difficulty,
+            force=body.force,
+        )
     except PipelineClientError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except PipelineError as e:

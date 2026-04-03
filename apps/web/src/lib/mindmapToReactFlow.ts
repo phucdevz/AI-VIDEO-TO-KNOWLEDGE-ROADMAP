@@ -12,7 +12,13 @@ export type MindmapJsonNode = {
 
 export type NeuralNodeFlowData = {
   label: string
-  theme: MindmapDiagramTheme
+  /** Deep time-linking anchor (seconds) when provided by backend AI. */
+  timestamp?: number
+  /**
+   * UI theme hint for demo nodes. Backend may not provide it.
+   * Kept optional so rendering can work with backend-provided nodes.
+   */
+  theme?: MindmapDiagramTheme
   isRoot?: boolean
 }
 

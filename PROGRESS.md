@@ -29,7 +29,8 @@
 - **Routing:** `react-router-dom` (~7.x)  
 - **Icons:** `lucide-react` (stroke chuẩn design system: **1.5**)  
 - **HTTP:** `axios` — client gọi FastAPI (`src/lib/api.ts`)  
-- **State (client):** `zustand` — `useWorkspaceStore` (Deep Time-Linking), `useAppStore` (prefs UI)  
+- **State (client):** `zustand` — `useWorkspaceStore` (Deep Time-Linking), `useAppStore` (prefs + library lectures), `useAuthStore` (Supabase session)  
+- **Backend-as-a-Service:** `@supabase/supabase-js` — Auth, Realtime (`lectures`, `user_preferences`), CRUD `quiz_results`  
 - **Video:** `react-player` — YouTube / URL, `seekTo` cho time-linking  
 - **Mindmap (render):** `mermaid` — dynamic import trong `MindmapPanel`  
 - **Charts:** `recharts` — Radar trên `AnalyticsPage`; heatmap dựng bằng CSS grid + token `ds-*`
@@ -63,8 +64,8 @@ apps/web/src/
 
 **Routing hiện tại (`App.tsx`):**
 
-- `/login` — không bọc `Layout` (full-page auth).  
-- Bọc `Layout`: `/` → redirect `/dashboard`, `/dashboard`, `/workspace`, `/quiz`, `/analytics`, `/settings`.  
+- `/login` — full-page auth (Supabase email/password khi có env).  
+- `RequireAuth` → `Layout` → `/` redirect `/dashboard`, `/dashboard`, `/workspace`, `/quiz`, `/analytics`, `/settings` (nếu không cấu hình Supabase FE, `RequireAuth` bỏ qua gate và render `Outlet` để dev).  
 - `/roadmap` → redirect `/dashboard` (tương thích link cũ).
 
 **Biến môi trường frontend:** `apps/web/.env.example` — `VITE_API_URL` (mặc định trong code: `http://127.0.0.1:8000` nếu không set).
@@ -156,9 +157,13 @@ backend/
 - [x] **Dashboard (Library):** grid mock lectures, search/filter UI, vùng “New Analysis” (chưa gọi API thật).  
 - [x] **Workspace:** 3 cột — `react-player`, `MindmapPanel` (Mermaid dynamic import + nút **Deep time-links** demo), `TutorSidebar` placeholder.  
 - [x] **Zustand `useWorkspaceStore`:** `requestSeek` / `clearSeekRequest` nối mindmap → video seek (logic demo).  
-- [x] **QuizCenter / Analytics / Settings:** shell UI + Recharts radar + heatmap grid; Settings có prefs (Zustand) + form API key (chưa persist).  
-- [x] **Auth page:** login/signup toggle, aesthetic glass + gradient (không có auth thật).  
-- [x] **Axios** `src/lib/api.ts` + helper `postAudioExtraction` khớp backend hiện tại.
+- [x] **QuizCenter:** chọn bài từ `lectures`, parse `quiz_data.questions`, state **pick → quiz → score**, lưu `quiz_results`.  
+- [x] **Analytics:** thống kê thực từ Supabase — số bài, điểm quiz TB (%), ước lượng giờ học từ `transcript.duration`.  
+- [x] **Settings:** đồng bộ `user_preferences` (JSON: summary, quiz difficulty, theme, API keys) + Realtime; `ds-*` UI.  
+- [x] **Auth:** Supabase Auth (email/password), `AuthPage` sign-in/sign-up, `RequireAuth` bọc `/dashboard`, `/workspace`, `/quiz`, `/analytics`, `/settings` khi có `VITE_SUPABASE_*` (thiếu env → bỏ qua gate để dev local).  
+- [x] **Social Authentication:** OAuth (GitHub & Google) qua Supabase `signInWithOAuth` + redirect về `/dashboard`.  
+- [x] **Session Management:** `persistSession/autoRefreshToken` + observer `onAuthStateChange` để đồng bộ session/user.  
+- [x] **Axios** `src/lib/api.ts` + `postAudioExtraction(url, userId?)` khớp backend (`user_id` optional).
 
 ### Backend
 
@@ -166,6 +171,13 @@ backend/
 - [x] Health check.  
 - [x] **Audio extraction service** (`yt-dlp`, `bestaudio/best`, lưu file dưới `TEMP_AUDIO_DIR`).  
 - [x] Route async `POST /extraction/audio` (thread pool), schema Pydantic.
+- [x] **Groq Whisper API** — transcript + segment timestamps qua `verbose_json`.
+- [x] **Gemini 1.5 Flash** — sinh `react_flow` (nodes/edges) + `quiz` + `tutor` JSON từ transcript.
+- [x] **Pipeline integration** — `POST /api/v1/extraction/audio` trả đủ contract (`transcription`, `react_flow`, `quiz`, `tutor`) và persist vào Supabase `lectures` khi cấu hình sẵn.  
+- [x] **Realtime-friendly persist** — sau bước extract, `upsert_processing_placeholder` (`status=processing`) để client nhận sự kiện Realtime sớm; sau AI thì upsert đầy đủ (`status=ready`). Retry bỏ `knowledge_chunks` nếu `PGRST204`.  
+- [x] **Request `user_id`** — optional trên `POST /extraction/audio` để gắn lecture với `auth.users` (RLS / thư viện theo user).
+- [x] **Multi-language support (VI/EN)** — Settings chọn ngôn ngữ, pipeline truyền `target_lang` xuống AI để tạo mindmap/summary theo ngôn ngữ.
+- [x] **Admin UI** — Gradio mounted tại `/admin` cho cấu hình key + chạy pipeline test + reload `.env`.
 
 ### DevEx
 
@@ -178,27 +190,23 @@ backend/
 
 ### Pipeline AI & dữ liệu (theo README dự án)
 
-- [ ] **Groq Whisper API** — transcript + timestamps (chưa có module/service).  
-- [ ] **Gemini 1.5 Flash** — sinh Mermaid mindmap + JSON quiz (chưa có).  
-- [ ] **Supabase** — schema, insert job/kết quả, storage file (chưa tích hợp).  
 - [ ] **Celery / queue** (nếu theo kiến trúc README) — chưa có.
 
 ### Frontend
 
-- [ ] **Nối Dashboard “Start pipeline”** → gọi `postAudioExtraction` + hiển thị trạng thái / lỗi.  
-- [ ] **Mindmap từ API:** hiện diagram **hard-code** trong `MindmapPanel`; cần parse string Mermaid từ backend + error boundary.  
 - [ ] **React Flow** (optional) — nếu cần chỉnh sửa graph tương tác thủ công (chưa trong repo).  
+- [ ] **Quiz & Tutor**: hiện tutor/quiz vẫn còn phần nào mock; cần render từ payload pipeline đầy đủ.  
 - [ ] **Quiz:** không có state câu hỏi thật, chấm điểm, hay đồng bộ backend.  
 - [ ] **Analytics:** dữ liệu mock; cần API thật hoặc Supabase aggregates.  
-- [ ] **Auth thật** (Supabase Auth / JWT) — hiện “Skip auth (dev)” và không bảo vệ route.  
+- [x] **Auth thật** (Supabase Auth / JWT) — hỗ trợ email/password + OAuth, bảo vệ route bằng `RequireAuth` khi có env.  
 - [ ] **API keys Settings:** chỉ UI; cần lưu an toàn (không commit, ideally backend proxy).  
 - [ ] **i18n / a11y audit** — chưa có kế hoạch cụ thể.
 
 ### Backend
 
-- [ ] Endpoint transcribe, generate mindmap/quiz, persist DB.  
 - [ ] **Không expose** đường dẫn file local trong production — cần object storage + signed URL.  
 - [ ] Auth / rate limit / user scoping.
+- [ ] **Supabase schema parity:** môi trường hiện tại thiếu cột `knowledge_chunks` trong `lectures` nên `upsert` đang lỗi `PGRST204`.
 
 ### Hạ tầng
 
@@ -214,7 +222,7 @@ backend/
 3. **Bundle size:** `mermaid` + `react-player` làm chunk lớn; cân nhắc `manualChunks`, lazy route, hoặc tách worker.  
 4. **Node engine:** Vite 8+ yêu cầu Node mới hơn; repo đang dùng **Vite 5.4** cho tương thích Node ~20.12 — ghi chú cho môi trường CI/CD.  
 5. **CORS:** backend `cors_origins` mặc định localhost:5173 — cập nhật khi deploy domain thật.  
-6. **`.env` backend:** không commit; `backend/.env.example` đã liệt kê placeholder `GROQ_API_KEY`, `GOOGLE_API_KEY`, `SUPABASE_*` — **chưa đọc trong code**.  
+6. **`.env`:** không commit; backend đọc `SUPABASE_*` + AI keys; frontend đọc `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (`apps/web/.env.example`).  
 7. **FFmpeg:** `yt-dlp` có thể cần FFmpeg trên PATH tùy format; ghi chú cho máy dev/CI.  
 8. **Bảo mật:** `POST /extraction/audio` có thể bị lạm dụng tải file; cần auth, quota, và sanitize output path.  
 9. **Workspace demo video:** URL YouTube cố định trong `WorkspaceVideoPanel` — thay bằng props/state từ pipeline.
@@ -269,3 +277,100 @@ backend/
 
 - ESLint rule `react-hooks/set-state-in-effect` trên `WorkspaceVideoPanel`: `setPlaying` sau clip loop bọc **`queueMicrotask`** để tránh setState đồng bộ trong effect.
 - Một số cảnh báo `react-refresh/only-export-components` (vd. `ShellContext`, `etherToast`) là **nợ đã có** — chưa refactor tách file trong pass này.
+- Sửa lỗi BE pipeline: `AIService.generate_from_transcript()` bị gọi sai positional args trong `pipeline.py`; đã đổi sang keyword arg `video_title=...` để khớp signature và tránh crash ở `/api/v1/extraction/audio` và `/admin` Manual Trigger.
+- Cập nhật fallback Groq: chuyển từ model đã bị gỡ `llama3-70b-8192` sang `"llama-3.3-70b-versatile"` (và `"llama-3.1-70b-versatile"` làm dự phòng), log chi tiết lỗi để phân biệt quota vs model issues khi xem trong Admin UI.
+- Ghi nhận blocker persist Supabase: `save_lecture_pipeline` lỗi `PGRST204` vì bảng `lectures` chưa có cột `knowledge_chunks`; pipeline vẫn trả dữ liệu cho UI nhưng `persisted=false`.
+- Sprint tích hợp Supabase (2026-03): Auth + Realtime library/settings + Quiz/Analytics + placeholder `processing` trên `lectures`; backend retry upsert không `knowledge_chunks`; FE `RequireAuth` chỉ khi có `VITE_SUPABASE_*`.
+- Fix schema mismatch Supabase (2026-03-31): backend persist/read `lectures` chuyển sang dùng `video_url` (không còn `video_id/source_url`), upsert `on_conflict=video_url`, và align payload với cột `quiz/summary`. Nếu vẫn gặp `PGRST204` sau khi ALTER table, **restart FastAPI** và bấm **Reload schema** trong Supabase để refresh PostgREST cache.
+
+---
+
+## 8. System Integration Status
+
+### 8.1 API flow contract (Backend)
+- Endpoint: `POST /api/v1/extraction/audio`
+- Request: `{ "url": "<youtube url>", "user_id": "<optional supabase auth uuid>" }`
+- Response (key parts consumed by FE):
+  - `transcription.segments[]`: `{ start, end, text }` (dùng cho context-menu + clip loop)
+  - `react_flow`: `{ nodes, edges }` (React Flow graph; mỗi node có `data.timestamp`)
+  - `quiz`: JSON (chưa bind đầy đủ ra UI Quiz Center)
+  - `tutor`: JSON (chưa render đầy đủ ở TutorSidebar)
+  - `persisted`, `lecture_id` (id Supabase: placeholder sau extract hoặc sau save; hỗ trợ Realtime + UI), `persist_message`
+
+**Current blocker (database):**
+- Supabase đang trả `PGRST204`: `Could not find the 'knowledge_chunks' column of 'lectures' in the schema cache`.
+- Trạng thái hiện tại: extraction/transcribe/AI vẫn chạy, response trả về FE/Admin bình thường, nhưng bước lưu cloud fail (`persisted=false`).
+- Hành động cần ở DB: thêm cột `knowledge_chunks jsonb` vào `lectures` hoặc chỉnh backend không gửi field này khi schema chưa sẵn sàng.
+
+### 8.2 Admin UI (Control plane)
+- `GET http://127.0.0.1:8000/admin`
+- Gradio Admin Panel:
+  - Inputs: `GROQ_API_KEY`, `GOOGLE_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`
+  - Lưu vào `backend/.env` và reload pydantic settings cache
+  - Manual Trigger chạy full pipeline (Extract → Transcribe → AI → Save) và trả JSON kết quả
+
+### 8.3 Frontend rendering (Workspace)
+- `DashboardPage`: `Start pipeline` → `postAudioExtraction(url, user?.id)`; `useAppStore` fetch + **Realtime** `lectures`; thẻ **Processing** khi `status === 'processing'`.
+- Store `useWorkspaceStore` giữ:
+  - `pipelineSourceUrl`, `pipelineReactFlow`, `transcriptSegments`, `tutor`, `quiz`
+- `WorkspacePage`:
+  - render videoUrl theo pipeline; `?lecture=<uuid>` load hàng từ Supabase → `setPipelineResult`
+  - nút extraction chạy lại pipeline với `pipelineSourceUrl` + `user_id`
+- `MindmapPanel`:
+  - bỏ hard-code diagram demo; render từ `pipelineReactFlow`
+  - deep time-linking: click node dùng `node.data.timestamp` để `seek`
+  - right-click: dùng `transcriptSegments` để chọn `{start, end}` cho clip loop
+
+---
+
+## 9. Database & Realtime policies (Supabase)
+
+**Mục tiêu:** Realtime (INSERT/UPDATE trên `lectures`) và Auth an toàn trong production đòi hỏi **RLS (Row Level Security)** trên các bảng public, cùng **publication** cho Realtime.
+
+### 9.1 DDL gợi ý (SQL Editor / migration)
+
+File tổng hợp trong repo: `supabase/sql/lectures_pipeline_columns.sql` (tạo `user_preferences`, `quiz_data`, `quiz_results`, …). Lỗi **`user_preferences` / `quiz_data` không có trong schema cache** → chạy file đó rồi **Reload schema** trong Dashboard.
+
+```sql
+-- lectures: trạng thái pipeline + owner (tên cột kiểm tra trùng môi trường trước khi chạy)
+alter table public.lectures add column if not exists status text default 'ready';
+alter table public.lectures add column if not exists user_id uuid references auth.users (id) on delete set null;
+alter table public.lectures add column if not exists knowledge_chunks jsonb default '[]'::jsonb;
+alter table public.lectures add column if not exists quiz_data jsonb default '{"questions":[]}'::jsonb;
+alter table public.lectures add column if not exists flow_data jsonb default '{"nodes":[],"edges":[]}'::jsonb;
+alter table public.lectures add column if not exists tutor_data jsonb default '{"summary":"","key_points":[]}'::jsonb;
+
+create table if not exists public.user_preferences (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  prefs jsonb not null default '{}'::jsonb,
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.quiz_results (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  lecture_id text,
+  score numeric not null,
+  total_questions int not null,
+  answers jsonb not null default '[]'::jsonb,
+  created_at timestamptz default now()
+);
+
+-- Realtime: thêm bảng vào publication (tên có thể là supabase_realtime)
+alter publication supabase_realtime add table public.lectures;
+alter publication supabase_realtime add table public.user_preferences;
+```
+
+*(Bổ sung `replica identity full` trên bảng nếu cần payload UPDATE/DELETE đầy đủ.)*
+
+### 9.2 RLS production
+
+- **Bắt buộc** trước khi mở app public: `enable row level security` cho `lectures`, `user_preferences`, `quiz_results`.  
+- `user_preferences`: chỉ `auth.uid() = user_id`.  
+- `lectures`: team định nghĩa đọc theo `user_id` hoặc bản ghi chia sẻ; backend (service role) bypass RLS khi ghi pipeline.  
+- `quiz_results`: chỉ chủ `user_id`.  
+- **Service role** chỉ trên backend FastAPI; frontend chỉ **anon key** + policies.
+
+### 9.3 Realtime INSERT từ FastAPI
+
+Upsert qua Supabase Python (service role) vẫn tạo WAL event. Client Realtime nhận được nếu bảng trong publication và session anon có `select` phù hợp (sau RLS).

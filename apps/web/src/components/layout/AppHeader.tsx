@@ -1,6 +1,7 @@
 import { Bell, Menu, Search } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { useShell } from './ShellContext'
+import { useAuthStore } from '../../stores/useAuthStore'
 
 const TITLES: Record<string, string> = {
   '/dashboard': 'Library',
@@ -32,6 +33,18 @@ export function AppHeader() {
   const { pathname } = useLocation()
   const title = TITLES[pathname] ?? 'Dashboard'
   const { mobileNavOpen, toggleMobileNav } = useShell()
+  const user = useAuthStore((s) => s.user)
+
+  const meta = user?.user_metadata as { full_name?: string; display_name?: string; avatar_url?: string } | undefined
+  const appMeta = user?.app_metadata as { full_name?: string; avatar_url?: string } | undefined
+  const displayName = meta?.full_name ?? meta?.display_name ?? appMeta?.full_name ?? user?.email ?? 'Guest'
+  const avatarUrl = meta?.avatar_url ?? appMeta?.avatar_url
+  const initials = displayName
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || '·'
 
   return (
     <header className="ds-surface-glass sticky top-0 z-30 border-b border-ds-border shadow-ds-soft backdrop-blur-[10px]">
@@ -55,13 +68,33 @@ export function AppHeader() {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            className="ds-interactive-icon shrink-0 rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/30 hover:text-ds-secondary md:order-3"
-            aria-label="Notifications"
-          >
-            <Bell className="h-6 w-6" strokeWidth={1.5} />
-          </button>
+          <div className="flex items-center gap-2 md:order-3">
+            <button
+              type="button"
+              className="ds-interactive-icon shrink-0 rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/30 hover:text-ds-secondary"
+              aria-label="Notifications"
+            >
+              <Bell className="h-6 w-6" strokeWidth={1.5} />
+            </button>
+            <div className="hidden items-center md:flex">
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={displayName}
+                  title={displayName}
+                  className="h-9 w-9 rounded-full border border-ds-border bg-ds-bg object-cover shadow-ds-soft"
+                />
+              ) : (
+                <div
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-ds-border bg-ds-bg/50 text-xs font-bold text-ds-text-secondary shadow-ds-soft"
+                  aria-label={displayName}
+                  title={displayName}
+                >
+                  {initials}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <SearchField className="md:order-2 md:max-w-lg md:flex-1 lg:max-w-xl" />

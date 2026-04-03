@@ -12,31 +12,28 @@ export function TechnologyStackLlm({ compact }: TechnologyStackLlmProps) {
       aria-labelledby="technology-stack-llm-heading"
     >
       <h2 id="technology-stack-llm-heading" className="text-lg font-bold text-ds-text-primary sm:text-xl">
-        Technology stack (minh bạch pipeline)
+        Cách hệ thống hoạt động
       </h2>
       <p className="ds-text-body-secondary mt-2 text-sm">
-        Sản phẩm mục tiêu sử dụng các mô hình và dịch vụ sau trong pipeline video → tri thức. Phần backend đang được nối dần
-        với frontend; thông tin dưới đây phản ánh kiến trúc thiết kế.
+        EtherAI xử lý video theo nhiều bước để tạo mindmap, quiz và analytics. Các bước chính được mô tả ngắn gọn dưới đây.
       </p>
       <ul className={`mt-4 list-disc space-y-3 pl-5 text-sm text-ds-text-primary sm:text-base ${compact ? 'space-y-2' : ''}`}>
         <li>
           <strong className="text-ds-text-primary">Speech-to-text:</strong>{' '}
           <span className="text-ds-text-secondary">
-            OpenAI <strong>Whisper Large-v3</strong> (mục tiêu tích hợp qua API tương thích Groq Whisper) — chuyển audio bài giảng
-            thành văn bản có dấu thời gian.
+            Nhận dạng lời nói: chuyển audio bài giảng thành văn bản theo thời gian.
           </span>
         </li>
         <li>
           <strong className="text-ds-text-primary">LLM đa phương thức &amp; sinh cấu trúc:</strong>{' '}
           <span className="text-ds-text-secondary">
-            Google <strong>Gemini 1.5 Flash</strong> — tạo sơ đồ Mermaid, câu hỏi trắc nghiệm, tóm tắt và gợi ý từ transcript.
+            Tạo nội dung: sinh sơ đồ mindmap (Mermaid), câu hỏi, tóm tắt và gợi ý từ transcript.
           </span>
         </li>
         <li>
           <strong className="text-ds-text-primary">Hạ tầng ứng dụng:</strong>{' '}
           <span className="text-ds-text-secondary">
-            Frontend React (Vite), backend FastAPI, trích audio <strong>yt-dlp</strong>, lưu trữ mục tiêu{' '}
-            <strong>Supabase</strong>.
+            Frontend + backend xử lý và lưu trữ trên <strong>Supabase</strong>.
           </span>
         </li>
       </ul>

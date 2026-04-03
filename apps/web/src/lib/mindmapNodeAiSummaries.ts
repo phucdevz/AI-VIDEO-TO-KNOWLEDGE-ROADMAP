@@ -27,5 +27,5 @@ export function getMindmapNodeAiSummary(label: string): string {
   if (/evaluation/i.test(s)) {
     return 'Đánh giá mô hình: metric, tập dev/test và cạm bẫy thường gặp — ôn nhanh trước khi làm quiz.'
   }
-  return 'EtherAI sẽ sinh đoạn tóm tắt từ transcript có timestamp khi pipeline Gemini được bật cho bài giảng này.'
+  return 'EtherAI sẽ sinh đoạn tóm tắt từ transcript có timestamp khi pipeline AI được bật cho bài giảng này.'
 }

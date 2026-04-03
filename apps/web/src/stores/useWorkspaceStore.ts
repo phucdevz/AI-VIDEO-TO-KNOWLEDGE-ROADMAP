@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { validateSeekSeconds } from '../lib/validateSeekSeconds'
+import type { NeuralFlowGraphEdge, NeuralFlowGraphNode } from '../lib/mindmapToReactFlow'
 
 export type SeekResult = { ok: true } | { ok: false; message: string }
 
@@ -9,6 +10,39 @@ export type MindmapHighlightBookmark = {
   startSeconds: number
   endSeconds: number
   savedAt: number
+}
+
+export type TranscriptSegment = {
+  start: number
+  end: number
+  text: string
+}
+
+export type KnowledgeChunk = {
+  text: string
+  start_seconds: number
+  end_seconds: number
+  segment_indices?: number[]
+}
+
+export type PipelineReactFlowGraph = {
+  nodes: NeuralFlowGraphNode[]
+  edges: NeuralFlowGraphEdge[]
+}
+
+export type BackendAudioExtractionResponse = {
+  source_url?: string
+  video_id?: string
+  title?: string | null
+  lecture_id?: string | null
+  persisted?: boolean
+  react_flow?: PipelineReactFlowGraph | null
+  transcription?: {
+    segments?: TranscriptSegment[]
+  } | null
+  knowledge_chunks?: KnowledgeChunk[] | null
+  quiz?: unknown
+  tutor?: unknown
 }
 
 /**
@@ -23,6 +57,21 @@ type WorkspaceState = {
   requestSeek: (seconds: number, segmentId?: string) => SeekResult
   clearSeekRequest: () => void
   setVideoCurrentTimeSeconds: (seconds: number) => void
+
+  /** Backend pipeline result (extract -> transcribe -> ai -> save) */
+  pipelineSourceUrl: string | null
+  pipelineVideoUrl: string | null
+  pipelineLectureId: string | null
+  pipelineLectureTitle: string | null
+  pipelineReactFlow: PipelineReactFlowGraph | null
+  transcriptSegments: TranscriptSegment[]
+  knowledgeChunks: KnowledgeChunk[]
+  quiz: unknown
+  tutor: unknown
+  persisted: boolean
+
+  setPipelineResult: (r: BackendAudioExtractionResponse) => void
+  clearPipelineResult: () => void
 
   mindmapHighlights: MindmapHighlightBookmark[]
   addMindmapHighlight: (
@@ -42,6 +91,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeSegmentId: null,
   videoCurrentTimeSeconds: 0,
 
+  pipelineSourceUrl: null,
+  pipelineVideoUrl: null,
+  pipelineLectureId: null,
+  pipelineLectureTitle: null,
+  pipelineReactFlow: null,
+  transcriptSegments: [],
+  knowledgeChunks: [],
+  quiz: null,
+  tutor: null,
+  persisted: false,
+
   mindmapHighlights: [],
   clipLoopPlaybackPulse: 0,
   clipLoop: null,
@@ -59,6 +119,72 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   clearSeekRequest: () => set({ seekToSeconds: null }),
   setVideoCurrentTimeSeconds: (seconds) =>
     set({ videoCurrentTimeSeconds: Number.isFinite(seconds) ? Math.max(0, seconds) : 0 }),
+
+  setPipelineResult: (r: BackendAudioExtractionResponse) => {
+    const sourceUrl = r.source_url ?? null
+    const videoUrl = sourceUrl
+    const segments = (r.transcription?.segments ?? []).map((s) => ({
+      start: Number(s.start) || 0,
+      end: Number(s.end) || 0,
+      text: String(s.text ?? '').trim(),
+    }))
+    const rf = r.react_flow
+    const reactFlowGraph =
+      rf && Array.isArray(rf.nodes) && Array.isArray(rf.edges) ? { nodes: rf.nodes, edges: rf.edges } : null
+    const chunks = Array.isArray(r.knowledge_chunks)
+      ? r.knowledge_chunks
+          .filter((c) => c && typeof c === 'object')
+          .map((c) => ({
+            text: String((c as any).text ?? '').trim(),
+            start_seconds: Number((c as any).start_seconds) || 0,
+            end_seconds: Number((c as any).end_seconds) || 0,
+            segment_indices: Array.isArray((c as any).segment_indices) ? (c as any).segment_indices : undefined,
+          }))
+          .filter((c) => c.text.length > 0 && Number.isFinite(c.start_seconds) && Number.isFinite(c.end_seconds) && c.end_seconds > c.start_seconds)
+      : []
+
+    set({
+      pipelineSourceUrl: sourceUrl,
+      pipelineVideoUrl: videoUrl,
+      pipelineLectureId: r.lecture_id ?? null,
+      pipelineLectureTitle: r.title ?? null,
+      pipelineReactFlow: reactFlowGraph,
+      transcriptSegments: segments,
+      knowledgeChunks: chunks,
+      quiz: r.quiz ?? null,
+      tutor: r.tutor ?? null,
+      persisted: Boolean(r.persisted),
+
+      // Reset learning state for the new lecture
+      seekToSeconds: null,
+      activeSegmentId: null,
+      clipLoop: null,
+      clipLoopPlaybackPulse: 0,
+      videoCurrentTimeSeconds: 0,
+      mindmapHighlights: [],
+    })
+  },
+
+  clearPipelineResult: () =>
+    set({
+      pipelineSourceUrl: null,
+      pipelineVideoUrl: null,
+      pipelineLectureId: null,
+      pipelineLectureTitle: null,
+      pipelineReactFlow: null,
+      transcriptSegments: [],
+      knowledgeChunks: [],
+      quiz: null,
+      tutor: null,
+      persisted: false,
+
+      seekToSeconds: null,
+      activeSegmentId: null,
+      clipLoop: null,
+      clipLoopPlaybackPulse: 0,
+      videoCurrentTimeSeconds: 0,
+      mindmapHighlights: [],
+    }),
 
   addMindmapHighlight: ({ nodeLabel, startSeconds, endSeconds }) => {
     const vs = validateSeekSeconds(startSeconds)

@@ -1,9 +1,23 @@
-import { Bookmark, BookmarkX, Play, Send, Sparkles, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { Bookmark, BookmarkX, ChevronDown, ChevronUp, Loader2, Play, Send, Sparkles, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { postTutorAsk } from '../../lib/api'
+import { useAuthStore } from '../../stores/useAuthStore'
 import { useToastStore } from '../../stores/useToastStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
+import { useSearchParams } from 'react-router-dom'
 
 type TutorTab = 'summary' | 'highlights'
+type ChatRole = 'user' | 'assistant'
+type ChatMessage = {
+  id: string
+  role: ChatRole
+  text: string
+  citations?: { start: number; end: number; text: string }[]
+}
+
+const CHAT_STORAGE_PREFIX = 'etherai:tutor-chat-v1:'
+const MAX_CHAT_MESSAGES = 40
+const SUMMARY_COLLAPSED_KEY = 'etherai:tutor-autosummary-collapsed-v1'
 
 function formatClipRange(start: number, end: number) {
   const fmt = (total: number) => {
@@ -19,20 +33,228 @@ function formatClipRange(start: number, end: number) {
  * AI summary + tutor chat (placeholder) + Highlights (AI Bookmark clips).
  */
 export function TutorSidebar() {
+  const [searchParams] = useSearchParams()
   const [draft, setDraft] = useState('')
   const [tab, setTab] = useState<TutorTab>('summary')
+  const [chat, setChat] = useState<ChatMessage[]>([])
+  const [asking, setAsking] = useState(false)
+  const [summaryCollapsed, setSummaryCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return window.localStorage.getItem(SUMMARY_COLLAPSED_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  const chatHolderRef = useRef<HTMLDivElement>(null)
   const mindmapHighlights = useWorkspaceStore((s) => s.mindmapHighlights)
+  const transcriptSegments = useWorkspaceStore((s) => s.transcriptSegments)
+  const knowledgeChunks = useWorkspaceStore((s) => s.knowledgeChunks)
+  const tutor = useWorkspaceStore((s) => s.tutor as { summary?: string; key_points?: { text?: string; timestamp_seconds?: number }[] } | null)
   const removeMindmapHighlight = useWorkspaceStore((s) => s.removeMindmapHighlight)
   const startClipLoop = useWorkspaceStore((s) => s.startClipLoop)
   const stopClipLoop = useWorkspaceStore((s) => s.stopClipLoop)
+  const requestSeek = useWorkspaceStore((s) => s.requestSeek)
   const clipLoop = useWorkspaceStore((s) => s.clipLoop)
+  const pipelineLectureId = useWorkspaceStore((s) => s.pipelineLectureId)
+  const pipelineVideoUrl = useWorkspaceStore((s) => s.pipelineVideoUrl ?? s.pipelineSourceUrl)
+  const userId = useAuthStore((s) => s.user?.id ?? null)
   const pushToast = useToastStore((s) => s.pushToast)
+
+  const lectureKey = useMemo(() => {
+    const paramLecture = (searchParams.get('lecture') ?? '').trim()
+    const k = (paramLecture || pipelineLectureId || pipelineVideoUrl || '').trim()
+    return k ? `${CHAT_STORAGE_PREFIX}${k}` : ''
+  }, [pipelineLectureId, pipelineVideoUrl, searchParams])
+
+  useEffect(() => {
+    if (!lectureKey) return
+    try {
+      const raw = window.localStorage.getItem(lectureKey)
+      if (!raw) {
+        setChat([])
+        return
+      }
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) {
+        setChat([])
+        return
+      }
+      const msgs = parsed
+        .filter((m) => m && typeof m === 'object')
+        .slice(0, MAX_CHAT_MESSAGES)
+        .map((m) => {
+          const mm = m as Partial<ChatMessage>
+          const role = mm.role === 'assistant' ? 'assistant' : 'user'
+          const text = typeof mm.text === 'string' ? mm.text : ''
+          const id =
+            typeof mm.id === 'string' && mm.id
+              ? mm.id
+              : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+          const citations = Array.isArray(mm.citations)
+            ? mm.citations
+                .filter((c) => c && typeof c === 'object')
+                .slice(0, 3)
+                .map((c) => {
+                  const cc = c as { start?: unknown; end?: unknown; text?: unknown }
+                  return {
+                    start: Number(cc.start) || 0,
+                    end: Number(cc.end) || 0,
+                    text: typeof cc.text === 'string' ? cc.text : '',
+                  }
+                })
+                .filter((c) => c.text.trim().length > 0)
+            : undefined
+          return { id, role, text, citations }
+        })
+        .filter((m) => m.text.trim().length > 0)
+      setChat(msgs)
+    } catch {
+      setChat([])
+    }
+  }, [lectureKey])
+
+  useEffect(() => {
+    if (!lectureKey) return
+    try {
+      window.localStorage.setItem(lectureKey, JSON.stringify(chat.slice(-MAX_CHAT_MESSAGES)))
+    } catch {
+      // ignore (private mode / blocked storage)
+    }
+  }, [chat, lectureKey])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SUMMARY_COLLAPSED_KEY, summaryCollapsed ? '1' : '0')
+    } catch {
+      // ignore
+    }
+  }, [summaryCollapsed])
 
   const onPlayClip = (startSeconds: number, endSeconds: number) => {
     const r = startClipLoop(startSeconds, endSeconds)
     if (!r.ok) {
       pushToast(r.message, 'error')
       return
+    }
+  }
+
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  const contextPool = useMemo(() => {
+    const chunks =
+      Array.isArray(knowledgeChunks) && knowledgeChunks.length > 0
+        ? knowledgeChunks
+            .slice(0, 260)
+            .map((c) => ({
+              start: c.start_seconds,
+              end: c.end_seconds,
+              text: c.text,
+            }))
+            .filter((c) => c.text.trim().length > 0 && Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start)
+        : []
+    if (chunks.length > 0) return chunks
+
+    return transcriptSegments
+      .filter((s) => s.text.trim().length > 0)
+      .slice(0, 5000)
+      .map((s) => ({ start: s.start, end: s.end, text: s.text }))
+  }, [knowledgeChunks, transcriptSegments])
+
+  const buildContextForQuestion = useCallback(
+    (question: string) => {
+      const q = normalize(question)
+      const qTokens = new Set(q.split(' ').filter((t) => t.length >= 3).slice(0, 24))
+
+      // Score by token overlap + length bonus.
+      const scored = contextPool.map((s) => {
+        const t = normalize(s.text)
+        let hit = 0
+        for (const tok of qTokens) if (t.includes(tok)) hit += 1
+        const len = Math.min(1, t.length / 600)
+        const score = hit * 1.2 + len * 0.35
+        return { s, score }
+      })
+      scored.sort((a, b) => b.score - a.score)
+
+      const top = scored.filter((x) => x.score > 0).slice(0, 18).map((x) => x.s)
+
+      // Always add a few evenly-spread anchors so answers can reference later parts.
+      const anchors: typeof contextPool = []
+      const n = contextPool.length
+      if (n > 0) {
+        for (const p of [0.1, 0.35, 0.6, 0.85]) {
+          anchors.push(contextPool[Math.min(n - 1, Math.max(0, Math.round((n - 1) * p)))]!)
+        }
+      }
+
+      const merged = [...top, ...anchors]
+      // De-dup close timestamps.
+      const out: typeof contextPool = []
+      merged
+        .sort((a, b) => a.start - b.start)
+        .forEach((s) => {
+          const last = out[out.length - 1]
+          if (last && Math.abs(last.start - s.start) < 8) return
+          out.push(s)
+        })
+
+      // Keep payload small enough.
+      return out.slice(0, 26)
+    },
+    [contextPool],
+  )
+
+  const canAsk = contextPool.length > 0 && !asking
+
+  useEffect(() => {
+    const el = chatHolderRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [chat, asking])
+
+  const askTutor = async () => {
+    const q = draft.trim()
+    if (!q) return
+    if (contextPool.length === 0) {
+      pushToast('Chưa có transcript để hỏi tutor.', 'error')
+      return
+    }
+    const id =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+
+    setChat((m) => [...m.slice(-MAX_CHAT_MESSAGES + 1), { id, role: 'user', text: q }])
+    setDraft('')
+    setAsking(true)
+    try {
+      const segments = buildContextForQuestion(q)
+      const r = await postTutorAsk({
+        question: q,
+        lecture_id: pipelineLectureId,
+        video_url: pipelineVideoUrl,
+        user_id: userId,
+        segments,
+        max_citations: 3,
+      })
+      const aid =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+      setChat((m) => [
+        ...m.slice(-MAX_CHAT_MESSAGES + 1),
+        { id: aid, role: 'assistant', text: r.answer, citations: r.citations ?? [] },
+      ])
+    } catch (e) {
+      // toast already handled by api interceptor
+    } finally {
+      setAsking(false)
     }
   }
 
@@ -76,46 +298,152 @@ export function TutorSidebar() {
       {tab === 'summary' ? (
         <>
           <div className="border-b border-ds-border p-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-ds-secondary" strokeWidth={1.5} />
-              <h2 id="workspace-tutor-title" className="text-sm font-bold text-ds-text-primary">
-                Auto-summary
-              </h2>
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setSummaryCollapsed((v) => !v)}
+                aria-expanded={!summaryCollapsed}
+                className="ds-interactive flex min-w-0 flex-1 items-center gap-2 text-left"
+                title={summaryCollapsed ? 'Mở Auto-summary' : 'Gập Auto-summary'}
+              >
+                <Sparkles className="h-5 w-5 shrink-0 text-ds-secondary" strokeWidth={1.5} />
+                <h2
+                  id="workspace-tutor-title"
+                  className="min-w-0 flex-1 truncate text-sm font-bold text-ds-text-primary"
+                >
+                  Auto-summary
+                </h2>
+                {summaryCollapsed ? (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-ds-text-secondary" strokeWidth={2} aria-hidden />
+                ) : (
+                  <ChevronUp className="h-4 w-4 shrink-0 text-ds-text-secondary" strokeWidth={2} aria-hidden />
+                )}
+              </button>
+              {!summaryCollapsed ? (
+                <button
+                  type="button"
+                  className="ds-interactive shrink-0 inline-flex items-center gap-2 rounded-ds-sm border border-ds-border bg-ds-bg/40 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wider text-ds-text-secondary hover:bg-ds-border/30 hover:text-ds-text-primary"
+                >
+                  Export
+                </button>
+              ) : null}
             </div>
-            <p className="mt-4 text-sm font-normal leading-relaxed text-ds-text-secondary">
-              Placeholder: Gemini will inject section summaries and key claims from the transcript. Export
-              to Supabase when the pipeline is connected.
-            </p>
-            <button
-              type="button"
-              className="ds-interactive mt-4 w-full rounded-ds-sm border border-ds-border py-2 text-xs font-bold uppercase tracking-wider text-ds-secondary hover:bg-ds-border/30"
-            >
-              Export summary
-            </button>
+            {!summaryCollapsed ? (
+              <>
+                <div className="mt-4 max-h-40 space-y-3 overflow-y-auto pr-2">
+                  <p className="text-sm font-normal leading-relaxed text-ds-text-secondary whitespace-pre-wrap">
+                    {tutor?.summary?.trim()
+                      ? tutor.summary
+                      : 'Chưa có summary từ pipeline. Chạy phân tích từ Dashboard hoặc Admin để nạp dữ liệu.'}
+                  </p>
+                  {Array.isArray(tutor?.key_points) && tutor.key_points.length > 0 ? (
+                    <ul className="space-y-2">
+                      {tutor.key_points.slice(0, 12).map((kp, i) => (
+                        <li
+                          key={`kp-${i}`}
+                          className="rounded-ds-sm bg-ds-border/15 px-3 py-2 text-xs text-ds-text-primary"
+                        >
+                          <button
+                            type="button"
+                            className="ds-interactive w-full text-left"
+                            onClick={() => {
+                              const sec = Number(kp.timestamp_seconds)
+                              if (!Number.isFinite(sec)) return
+                              const r = requestSeek(sec, `kp-${i}`)
+                              if (!r.ok) pushToast(r.message, 'error')
+                            }}
+                          >
+                            <span className="font-mono text-ds-secondary">
+                              {formatClipRange(Number(kp.timestamp_seconds) || 0, Number(kp.timestamp_seconds) || 0)
+                                .split(' → ')[0]}
+                            </span>{' '}
+                            · {kp.text || 'Key point'}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </div>
           <div className="flex min-h-0 flex-1 flex-col p-4">
             <h3 className="ds-text-label text-ds-text-secondary">AI tutor</h3>
-            <div className="mt-4 flex-1 space-y-4 overflow-y-auto rounded-ds-sm bg-ds-bg/60 p-4">
-              <div className="rounded-ds-sm bg-ds-border/20 p-3 text-sm text-ds-text-primary">
-                Ask anything grounded in this lecture — RAG on the transcript will answer here.
+            <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-ds-sm bg-ds-bg/60">
+              <div ref={chatHolderRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+                {chat.length === 0 ? (
+                  <div className="rounded-ds-sm bg-ds-border/20 p-3 text-sm text-ds-text-primary">
+                    Hỏi bất kỳ điều gì dựa trên nội dung bài giảng. Tutor sẽ trả lời kèm mốc thời gian để bạn nhảy tới đoạn liên quan.
+                  </div>
+                ) : null}
+                {chat.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`rounded-ds-sm border p-3 ${
+                      m.role === 'user'
+                        ? 'border-ds-primary/30 bg-ds-primary/10 text-ds-text-primary'
+                        : 'border-ds-border/70 bg-ds-bg/40 text-ds-text-primary'
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.text}</p>
+                    {m.role === 'assistant' && m.citations && m.citations.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {m.citations.slice(0, 3).map((c, i) => (
+                          <button
+                            key={`${m.id}-c-${i}-${c.start}`}
+                            type="button"
+                            className="ds-interactive inline-flex items-center gap-2 rounded-ds-sm border border-ds-border bg-ds-bg/60 px-2.5 py-1.5 text-[11px] font-bold text-ds-secondary hover:bg-ds-border/30"
+                            onClick={() => {
+                              const r = requestSeek(c.start, `${m.id}-cite-${i}`)
+                              if (!r.ok) pushToast(r.message, 'error')
+                            }}
+                            title={c.text}
+                          >
+                            <span className="font-mono text-ds-secondary">
+                              {formatClipRange(c.start, c.end).split(' → ')[0]}
+                            </span>
+                            <span className="max-w-[16rem] truncate text-ds-text-secondary">
+                              {c.text}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+                {asking ? (
+                  <div className="flex items-center gap-2 rounded-ds-sm border border-ds-border/70 bg-ds-bg/40 p-3 text-sm text-ds-text-secondary">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    Đang suy nghĩ…
+                  </div>
+                ) : null}
+              </div>
+              <div className="border-t border-ds-border/70 p-3">
+                {contextPool.length === 0 ? (
+                  <p className="text-xs text-ds-text-secondary">
+                    Chưa có transcript. Hãy chạy pipeline để tutor có dữ liệu trả lời.
+                  </p>
+                ) : null}
               </div>
             </div>
             <form
               className="mt-4 flex gap-2"
               onSubmit={(e) => {
                 e.preventDefault()
-                setDraft('')
+                void askTutor()
               }}
             >
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Ask your tutor…"
+                placeholder={contextPool.length === 0 ? 'Chưa có transcript…' : 'Hỏi tutor…'}
                 className="ds-transition flex-1 rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-2 text-sm text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
+                disabled={contextPool.length === 0 || asking}
               />
               <button
                 type="submit"
-                className="ds-interactive flex h-10 w-10 shrink-0 items-center justify-center rounded-ds-sm bg-ds-primary text-ds-text-primary hover:opacity-90"
+                disabled={!canAsk || draft.trim().length === 0}
+                className="ds-interactive flex h-10 w-10 shrink-0 items-center justify-center rounded-ds-sm bg-ds-primary text-ds-text-primary hover:opacity-90 disabled:opacity-50"
                 aria-label="Send"
               >
                 <Send className="h-5 w-5" strokeWidth={1.5} />

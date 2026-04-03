@@ -1,9 +1,15 @@
-import { Filter, LayoutGrid, Library, Plus, Search, Sparkles } from 'lucide-react'
+import { Filter, LayoutGrid, Library, Loader2, Plus, Search, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { LlmFriendlyGlossary, SemanticIntroBlocks, TechnologyStackLlm } from '../components/content'
 import { PageMeta } from '../components/seo'
 import { MOCK_LECTURES } from '../data/lectures'
+import { postAudioExtraction } from '../lib/api'
+import { isSupabaseConfigured } from '../lib/supabase'
+import { useAppStore, type LibraryLectureRow } from '../stores/useAppStore'
+import { useAuthStore } from '../stores/useAuthStore'
+import { useToastStore } from '../stores/useToastStore'
+import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
 function LectureCardSkeleton() {
   return (
@@ -24,6 +30,25 @@ function LectureCardSkeleton() {
   )
 }
 
+function formatDuration(seconds: unknown): string {
+  const s = typeof seconds === 'number' && Number.isFinite(seconds) ? seconds : 0
+  const m = Math.floor(s / 60)
+  const r = Math.round(s % 60)
+  return `${m}:${String(r).padStart(2, '0')}`
+}
+
+function lectureProgress(row: LibraryLectureRow): number {
+  const flow = row.flow_data
+  if (!flow || typeof flow !== 'object' || !('nodes' in flow)) return 0
+  const nodes = (flow as { nodes?: unknown }).nodes
+  if (!Array.isArray(nodes)) return 0
+  return Math.min(100, nodes.length * 10)
+}
+
+type GridItem =
+  | { kind: 'db'; row: LibraryLectureRow }
+  | { kind: 'mock'; id: string; title: string; course: string; duration: string; progress: number }
+
 /**
  * Library / Dashboard — search, filters, grid of processed lectures, prominent new analysis.
  */
@@ -32,29 +57,69 @@ export function DashboardPage() {
   const [libraryQuery, setLibraryQuery] = useState('')
   const [pipelineBusy, setPipelineBusy] = useState(false)
   const [gridLoading, setGridLoading] = useState(true)
+  const navigate = useNavigate()
+  const pushToast = useToastStore((s) => s.pushToast)
+  const setPipelineResult = useWorkspaceStore((s) => s.setPipelineResult)
+  const user = useAuthStore((s) => s.user)
+  const language = useAppStore((s) => s.language)
+  const quizDifficulty = useAppStore((s) => s.quizDifficulty)
+
+  const libraryLectures = useAppStore((s) => s.libraryLectures)
+  const fetchLibraryLectures = useAppStore((s) => s.fetchLibraryLectures)
+  const bindLibraryRealtime = useAppStore((s) => s.bindLibraryRealtime)
+  const unbindLibraryRealtime = useAppStore((s) => s.unbindLibraryRealtime)
 
   useEffect(() => {
-    const t = window.setTimeout(() => setGridLoading(false), 700)
-    return () => window.clearTimeout(t)
-  }, [])
+    const boot = async () => {
+      setGridLoading(true)
+      if (isSupabaseConfigured() && user?.id) {
+        await fetchLibraryLectures()
+        bindLibraryRealtime()
+      } else {
+        await new Promise((r) => setTimeout(r, 400))
+      }
+      setGridLoading(false)
+    }
+    void boot()
+    return () => unbindLibraryRealtime()
+  }, [user?.id, fetchLibraryLectures, bindLibraryRealtime, unbindLibraryRealtime])
 
-  const filteredLectures = useMemo(() => {
+  const gridItems: GridItem[] = useMemo(() => {
     const q = libraryQuery.trim().toLowerCase()
-    if (!q) return MOCK_LECTURES
-    return MOCK_LECTURES.filter(
-      (l) =>
-        l.title.toLowerCase().includes(q) ||
-        l.course.toLowerCase().includes(q) ||
-        l.id.includes(q),
-    )
-  }, [libraryQuery])
+    if (isSupabaseConfigured() && user?.id) {
+      const rows = libraryLectures.filter((row) => {
+        if (!q) return true
+        const title = (row.title ?? '').toLowerCase()
+        const url = ((row as any).video_url ?? row.source_url ?? '').toLowerCase()
+        const id = row.id.toLowerCase()
+        return title.includes(q) || url.includes(q) || id.includes(q)
+      })
+      return rows.map((row) => ({ kind: 'db' as const, row }))
+    }
+    const mocks = !q
+      ? MOCK_LECTURES
+      : MOCK_LECTURES.filter(
+          (l) =>
+            l.title.toLowerCase().includes(q) ||
+            l.course.toLowerCase().includes(q) ||
+            l.id.includes(q),
+        )
+    return mocks.map((l) => ({
+      kind: 'mock' as const,
+      id: l.id,
+      title: l.title,
+      course: l.course,
+      duration: l.duration,
+      progress: l.progress,
+    }))
+  }, [libraryLectures, libraryQuery, user?.id])
 
   return (
     <div className="mx-auto max-w-ds space-y-8 px-4 py-6 sm:px-6 md:px-8 md:py-8">
       <PageMeta
         path="/dashboard"
         title="Library"
-        description="AI Video-to-Knowledge Roadmap: chuyển video bài giảng thành mindmap với Whisper Large-v3 và Gemini 1.5 Flash; thư viện bài giảng, pipeline phân tích và workspace deep time-linking."
+        description="EtherAI Library: thư viện bài giảng, pipeline phân tích và workspace deep time-linking."
       />
       <SemanticIntroBlocks />
       <div className="grid gap-6 lg:grid-cols-2">
@@ -75,7 +140,7 @@ export function DashboardPage() {
               Paste a lecture URL or upload
             </h3>
             <p className="ds-text-body-secondary mt-2 line-clamp-3">
-              Calls FastAPI + yt-dlp → Whisper → Gemini → Supabase (wire with `api.post` when ready).
+              Dán URL bài giảng và để hệ thống tự phân tích, tạo mindmap.
             </p>
           </div>
           <Link
@@ -100,9 +165,25 @@ export function DashboardPage() {
           <button
             type="button"
             disabled={pipelineBusy}
-            onClick={() => {
+            onClick={async () => {
+              const url = pipelineUrlDraft.trim()
+              if (!url) {
+                pushToast('Nhập URL bài giảng trước khi chạy pipeline.', 'error')
+                return
+              }
+              if (pipelineBusy) return
               setPipelineBusy(true)
-              window.setTimeout(() => setPipelineBusy(false), 1800)
+              try {
+                const data = await postAudioExtraction(url, user?.id ?? null, language, quizDifficulty)
+                setPipelineResult(data)
+                pushToast('Đã chạy pipeline — mở Workspace để xem mindmap.', 'success')
+                if (user?.id) void fetchLibraryLectures()
+                navigate('/workspace')
+              } catch {
+                pushToast('Pipeline thất bại. Kiểm tra backend log / keys API.', 'error')
+              } finally {
+                setPipelineBusy(false)
+              }
             }}
             className="ds-interactive shrink-0 rounded-ds-sm border border-ds-secondary/50 bg-ds-secondary/10 px-8 py-4 text-sm font-bold text-ds-secondary hover:bg-ds-secondary/20"
           >
@@ -150,53 +231,110 @@ export function DashboardPage() {
         >
           Danh sách bài giảng trong thư viện
         </h2>
+        {isSupabaseConfigured() && user?.id && (
+          <p className="mb-4 text-sm text-ds-text-secondary">
+            Thư viện sẽ tự cập nhật khi pipeline đang chạy.
+          </p>
+        )}
         {gridLoading ? (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {Array.from({ length: 8 }).map((_, i) => (
               <LectureCardSkeleton key={`sk-${i}`} />
             ))}
           </div>
-        ) : filteredLectures.length === 0 ? (
+        ) : gridItems.length === 0 ? (
           <div className="ds-surface-glass flex flex-col items-center justify-center gap-4 rounded-ds-lg border border-ds-border border-dashed px-8 py-16 text-center shadow-ds-soft backdrop-blur-[10px]">
             <Library className="h-12 w-12 text-ds-secondary" strokeWidth={1.5} aria-hidden />
             <div>
               <p className="text-base font-bold text-ds-text-primary">Chưa có bài giảng khớp bộ lọc</p>
               <p className="mt-2 max-w-md text-sm text-ds-text-secondary">
-                Thử từ khóa khác hoặc xóa ô tìm kiếm để xem toàn bộ thư viện demo.
+                Thử từ khóa khác hoặc chạy pipeline mới. Khi Supabase bật, thư viện lấy dữ liệu từ bảng `lectures`.
               </p>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filteredLectures.map((lec) => (
-              <Link
-                key={lec.id}
-                to={`/workspace?lecture=${encodeURIComponent(lec.id)}`}
-                className="ds-interactive-card ds-surface-glass group block min-h-0 min-w-0 rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-[10px] hover:border-ds-primary/40"
-              >
-                <article>
-                  <div className="mb-4 flex gap-3">
-                    <h3 className="min-w-0 flex-1 text-lg font-bold leading-snug text-ds-text-primary line-clamp-2">
-                      {lec.title}
-                    </h3>
-                    <span className="shrink-0 self-start rounded-ds-sm bg-ds-primary/20 px-2 py-1 text-[14px] font-bold tabular-nums text-ds-secondary md:text-xs">
-                      {lec.duration}
+            {gridItems.map((item) => {
+              if (item.kind === 'mock') {
+                return (
+                  <Link
+                    key={item.id}
+                    to={`/workspace?lecture=${encodeURIComponent(item.id)}`}
+                    className="ds-interactive-card ds-surface-glass group block min-h-0 min-w-0 rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-[10px] hover:border-ds-primary/40"
+                  >
+                    <article>
+                      <div className="mb-4 flex gap-3">
+                        <h3 className="min-w-0 flex-1 text-lg font-bold leading-snug text-ds-text-primary line-clamp-2">
+                          {item.title}
+                        </h3>
+                        <span className="shrink-0 self-start rounded-ds-sm bg-ds-primary/20 px-2 py-1 text-[14px] font-bold tabular-nums text-ds-secondary md:text-xs">
+                          {item.duration}
+                        </span>
+                      </div>
+                      <p className="line-clamp-1 text-base font-normal text-ds-text-secondary md:text-sm">{item.course}</p>
+                      <div className="mt-6 h-2 w-full overflow-hidden rounded-ds-sm bg-ds-border/40">
+                        <div
+                          className="h-full rounded-ds-sm bg-ds-primary transition-all"
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-[14px] font-bold text-ds-text-secondary md:text-xs">{item.progress}% mapped</p>
+                      <span className="mt-6 inline-flex text-base font-bold text-ds-secondary group-hover:underline md:text-sm">
+                        Open in workspace →
+                      </span>
+                    </article>
+                  </Link>
+                )
+              }
+
+              const row = item.row
+              const t = row.transcript as { duration?: number } | undefined
+              const processing = row.status === 'processing'
+              const title = row.title?.trim() || 'Untitled lecture'
+              const dur = formatDuration(t?.duration)
+              const progress = lectureProgress(row)
+
+              return (
+                <Link
+                  key={row.id}
+                  to={`/workspace?lecture=${encodeURIComponent(row.id)}`}
+                  className="ds-interactive-card ds-surface-glass group block min-h-0 min-w-0 rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-[10px] hover:border-ds-primary/40"
+                >
+                  <article>
+                    <div className="mb-4 flex gap-3">
+                      <h3 className="min-w-0 flex-1 text-lg font-bold leading-snug text-ds-text-primary line-clamp-2">
+                        {title}
+                        {processing && (
+                          <span className="ml-2 inline-flex items-center gap-1 rounded-ds-sm bg-ds-secondary/15 px-2 py-0.5 text-xs font-bold text-ds-secondary">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} aria-hidden />
+                            Processing
+                          </span>
+                        )}
+                      </h3>
+                      <span className="shrink-0 self-start rounded-ds-sm bg-ds-primary/20 px-2 py-1 text-[14px] font-bold tabular-nums text-ds-secondary md:text-xs">
+                        {dur}
+                      </span>
+                    </div>
+                    <p className="line-clamp-1 text-base font-normal text-ds-text-secondary md:text-sm">
+                      {(row.source_url ?? '').replace(/^https?:\/\//, '').slice(0, 48)}
+                      {(row.source_url ?? '').length > 48 ? '…' : ''}
+                    </p>
+                    <div className="mt-6 h-2 w-full overflow-hidden rounded-ds-sm bg-ds-border/40">
+                      <div
+                        className={`h-full rounded-ds-sm transition-all ${processing ? 'animate-pulse bg-ds-secondary/50' : 'bg-ds-primary'}`}
+                        style={{ width: processing ? '35%' : `${progress}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-[14px] font-bold text-ds-text-secondary md:text-xs">
+                      {processing ? 'Pipeline đang chạy…' : `${progress}% mapped`}
+                    </p>
+                    <span className="mt-6 inline-flex text-base font-bold text-ds-secondary group-hover:underline md:text-sm">
+                      Open in workspace →
                     </span>
-                  </div>
-                  <p className="line-clamp-1 text-base font-normal text-ds-text-secondary md:text-sm">{lec.course}</p>
-                  <div className="mt-6 h-2 w-full overflow-hidden rounded-ds-sm bg-ds-border/40">
-                    <div
-                      className="h-full rounded-ds-sm bg-ds-primary transition-all"
-                      style={{ width: `${lec.progress}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-[14px] font-bold text-ds-text-secondary md:text-xs">{lec.progress}% mapped</p>
-                  <span className="mt-6 inline-flex text-base font-bold text-ds-secondary group-hover:underline md:text-sm">
-                    Open in workspace →
-                  </span>
-                </article>
-              </Link>
-            ))}
+                  </article>
+                </Link>
+              )
+            })}
           </div>
         )}
       </section>

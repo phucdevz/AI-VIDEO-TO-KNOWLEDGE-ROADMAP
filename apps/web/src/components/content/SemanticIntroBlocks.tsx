@@ -32,8 +32,8 @@ export function SemanticIntroBlocks({ condensed }: SemanticIntroBlocksProps) {
         </h2>
         {condensed ? (
           <p className="ds-text-body-secondary mt-3 text-sm sm:text-base">
-            Dán URL video → pipeline trích audio → Whisper tạo transcript có timestamp → Gemini sinh mindmap (Mermaid) và mốc deep
-            time-linking → bạn mở <strong className="text-ds-text-primary">Workspace</strong> để xem video và sơ đồ cùng lúc.
+            Dán URL video → hệ thống trích audio, nhận dạng lời nói theo thời gian → tạo mindmap và mốc deep time-linking → bạn mở{' '}
+            <strong className="text-ds-text-primary">Workspace</strong> để xem video và sơ đồ cùng lúc.
           </p>
         ) : (
           <>
@@ -43,19 +43,19 @@ export function SemanticIntroBlocks({ condensed }: SemanticIntroBlocksProps) {
             <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-ds-text-primary sm:text-base">
               <li>
                 <strong className="text-ds-text-primary">Nhập nguồn:</strong> dán URL (ví dụ YouTube) hoặc tải file; backend trích{' '}
-                <strong className="text-ds-text-primary">audio</strong> bằng yt-dlp.
+                <strong className="text-ds-text-primary">audio</strong> từ video.
               </li>
               <li>
-                <strong className="text-ds-text-primary">Nhận dạng lời nói:</strong> Whisper Large-v3 tạo văn bản theo thời gian
-                (phục vụ semantic chunking).
+                <strong className="text-ds-text-primary">Nhận dạng lời nói:</strong> hệ thống tạo văn bản theo thời gian (phục vụ semantic
+                chunking).
               </li>
               <li>
-                <strong className="text-ds-text-primary">Sinh mindmap:</strong> Gemini 1.5 Flash đọc transcript và xuất biểu đồ
-                Mermaid + các nút có thể gắn với timestamp.
+                <strong className="text-ds-text-primary">Sinh mindmap:</strong> AI tạo sơ đồ mindmap từ transcript và gắn các nút với
+                timestamp.
               </li>
               <li>
                 <strong className="text-ds-text-primary">Workspace:</strong> trình phát video, panel mindmap và deep time-linking
-                đồng bộ; tóm tắt và tutor (RAG) bổ sung ngữ cảnh.
+                đồng bộ; tóm tắt và gợi ý học tập bổ sung ngữ cảnh.
               </li>
             </ol>
           </>

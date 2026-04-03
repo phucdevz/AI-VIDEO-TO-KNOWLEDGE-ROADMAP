@@ -30,8 +30,7 @@ def get_transcription_service(
 def get_ai_service(
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> AIService:
-    key = settings.google_api_key or ""
-    return AIService(api_key=key)
+    return AIService(api_key=settings.google_api_key, groq_api_key=settings.groq_api_key)
 
 
 def get_database_service(

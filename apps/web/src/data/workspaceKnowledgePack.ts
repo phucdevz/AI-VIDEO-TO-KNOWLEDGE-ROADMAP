@@ -91,7 +91,7 @@ export function getKnowledgePackSummarySections(
   return [
     {
       heading: 'Tổng quan bài',
-      body: `Bài «${lectureTitle}» (${course}) — bản tóm tắt dự kiến từ pipeline AI (Gemini + transcript). Khi backend kết nối, mỗi mục sẽ được cập nhật theo đúng nội dung phát biểu trong video.`,
+      body: `Bài «${lectureTitle}» (${course}) — bản tóm tắt dự kiến từ AI dựa trên transcript. Khi backend kết nối, mỗi mục sẽ được cập nhật theo đúng nội dung phát biểu trong video.`,
     },
     {
       heading: 'Mục tiêu học tập',
