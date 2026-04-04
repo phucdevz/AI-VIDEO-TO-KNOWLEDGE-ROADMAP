@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { toPng } from 'html-to-image'
 import type { MindmapDiagramTheme, NeuralFlowGraphEdge, NeuralFlowGraphNode } from '../../lib/mindmapToReactFlow'
+import { useIsMobileViewport } from '../../hooks/useMatchMedia'
 import {
   resolveClipRangeFromMindmapLabel,
   resolveSeekFromMindmapLabel,
@@ -62,12 +63,15 @@ function MindmapFlowCanvas({
   setMindContextMenu,
   registerFocusSegment,
   showMiniMap,
+  showFlowChrome,
 }: {
   diagramTheme: MindmapDiagramTheme
   exportContainerRef: MutableRefObject<HTMLDivElement | null>
   setMindContextMenu: Dispatch<SetStateAction<MindContextMenuState>>
   registerFocusSegment: (fn: (segmentId: string) => void) => void
   showMiniMap: boolean
+  /** Zoom/MiniMap controls — hidden on small touch viewports for pan-first UX. */
+  showFlowChrome: boolean
 }) {
   const notifiedRef = useRef(false)
   const { fitView, zoomIn, zoomOut } = useReactFlow()
@@ -319,51 +323,53 @@ function MindmapFlowCanvas({
           color="#102038"
           variant={BackgroundVariant.Dots}
         />
-        {showMiniMap ? (
+        {showFlowChrome && showMiniMap ? (
           <MiniMap
             position="bottom-left"
             pannable
             zoomable
-            className="ds-surface-glass !m-3 !overflow-hidden rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px]"
+            className="ds-surface-glass !m-3 !overflow-hidden rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-md md:backdrop-blur-[10px]"
             maskColor="rgba(10, 25, 47, 0.5)"
             nodeStrokeWidth={2}
             nodeStrokeColor="#7c4dff"
             nodeColor={() => 'rgba(124, 77, 255, 0.32)'}
           />
         ) : null}
-        <Controls
-          position="top-right"
-          showZoom={false}
-          showFitView={false}
-          showInteractive={false}
-          orientation="vertical"
-          className="mindmap-flow-controls ds-surface-glass m-2 flex flex-col gap-0.5 rounded-ds-lg border border-ds-border p-1 shadow-ds-soft backdrop-blur-[10px]"
-        >
-          <ControlButton
-            onClick={() => zoomOut()}
-            className={controlBtnClass}
-            title="Thu nhỏ"
-            aria-label="Thu nhỏ"
+        {showFlowChrome ? (
+          <Controls
+            position="top-right"
+            showZoom={false}
+            showFitView={false}
+            showInteractive={false}
+            orientation="vertical"
+            className="mindmap-flow-controls ds-surface-glass m-2 flex flex-col gap-0.5 rounded-ds-lg border border-ds-border p-1 shadow-ds-soft backdrop-blur-md md:backdrop-blur-[10px]"
           >
-            <ZoomOut className="h-4 w-4" strokeWidth={1.5} />
-          </ControlButton>
-          <ControlButton
-            onClick={() => zoomIn()}
-            className={controlBtnClass}
-            title="Phóng to"
-            aria-label="Phóng to"
-          >
-            <ZoomIn className="h-4 w-4" strokeWidth={1.5} />
-          </ControlButton>
-          <ControlButton
-            onClick={() => fitView({ padding: 0.22, duration: 220 })}
-            className={controlBtnClass}
-            title="Vừa khung"
-            aria-label="Vừa khung"
-          >
-            <Maximize2 className="h-4 w-4" strokeWidth={1.5} />
-          </ControlButton>
-        </Controls>
+            <ControlButton
+              onClick={() => zoomOut()}
+              className={controlBtnClass}
+              title="Thu nhỏ"
+              aria-label="Thu nhỏ"
+            >
+              <ZoomOut className="h-4 w-4" strokeWidth={1.5} />
+            </ControlButton>
+            <ControlButton
+              onClick={() => zoomIn()}
+              className={controlBtnClass}
+              title="Phóng to"
+              aria-label="Phóng to"
+            >
+              <ZoomIn className="h-4 w-4" strokeWidth={1.5} />
+            </ControlButton>
+            <ControlButton
+              onClick={() => fitView({ padding: 0.22, duration: 220 })}
+              className={controlBtnClass}
+              title="Vừa khung"
+              aria-label="Vừa khung"
+            >
+              <Maximize2 className="h-4 w-4" strokeWidth={1.5} />
+            </ControlButton>
+          </Controls>
+        ) : null}
       </ReactFlow>
     </div>
   )
@@ -379,6 +385,7 @@ export function MindmapPanel({
   isFullscreen?: boolean
   onToggleFullscreen?: () => void
 }) {
+  const isMobileViewport = useIsMobileViewport()
   const holderRef = useRef<HTMLDivElement>(null)
   const exportWrapRef = useRef<HTMLDivElement>(null)
   const focusSegmentRef = useRef<(segmentId: string) => void>(() => {})
@@ -654,7 +661,7 @@ export function MindmapPanel({
         </h2>
         {mapVisible ? (
           <div
-            className="flex shrink-0 flex-nowrap items-center justify-end gap-0.5 rounded-ds-sm border border-ds-border bg-ds-bg/70 p-1 shadow-ds-soft backdrop-blur-md"
+            className="hidden shrink-0 flex-nowrap items-center justify-end gap-0.5 rounded-ds-sm border border-ds-border bg-ds-bg/70 p-1 shadow-ds-soft backdrop-blur-md md:flex"
             role="toolbar"
             aria-label="Mindmap tools"
           >

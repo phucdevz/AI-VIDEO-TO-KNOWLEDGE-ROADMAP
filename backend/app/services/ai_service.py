@@ -11,9 +11,237 @@ import math
 import google.generativeai as genai
 from groq import Groq
 
+from app.admin_prompt_store import load_prompt_overrides
+from app.services.accuracy_metrics import ACCURACY_REFINEMENT_THRESHOLD, compute_accuracy_components
 from app.services.transcription_service import TranscriptionResult
 
 logger = logging.getLogger(__name__)
+
+_REFINEMENT_PROMPT_SUFFIX = """
+
+=== REFINEMENT PASS (same RISEN task, stricter alignment) ===
+Regenerate the ENTIRE JSON with keys "react_flow", "quiz", "tutor" only.
+- EXECUTE: Every react_flow.nodes[*].data.timestamp MUST fall within [segment.start-2s, segment.end+2s] for a real transcript segment.
+- **Mindmap:** Each node = one **precise** main idea at that timestamp; no node count target — remove vague/duplicate nodes; cover mid-timeline with **accurate** content, not filler.
+- Use transcript terminology verbatim where possible; keep quiz+tutor consistent with the graph.
+- Output: exactly one valid JSON object, no markdown or code fences.
+
+QUALITY:
+- Think step-by-step before emitting JSON. If a requirement conflicts with evidence, follow the transcript.
+"""
+
+
+def _risen_tutor_summary_bounds(
+    *,
+    duration_s: float | None,
+    transcript_char_len: int,
+    target_lang_code: str,
+) -> str:
+    """
+    Scale tutor.summary richness by lecture length — avoid one-size-fits-all word counts.
+    Vietnamese typically uses more characters per 'word' than English; give both hints when vi.
+    """
+    # Infer bucket from duration first, then from transcript size if duration missing.
+    if duration_s and duration_s > 0:
+        if duration_s < 600:
+            bucket = "short"
+        elif duration_s < 1800:
+            bucket = "medium"
+        elif duration_s < 3600:
+            bucket = "long"
+        else:
+            bucket = "very_long"
+    else:
+        if transcript_char_len < 2500:
+            bucket = "short"
+        elif transcript_char_len < 12000:
+            bucket = "medium"
+        elif transcript_char_len < 35000:
+            bucket = "long"
+        else:
+            bucket = "very_long"
+
+    vi = target_lang_code.strip().lower() == "vi"
+    if bucket == "short":
+        return (
+            "tutor.summary length: concise synthesis — roughly **80–180 English words**, or **350–900 Vietnamese characters**. Do not pad."
+            if vi
+            else "tutor.summary length: concise — roughly **80–180 words**."
+        )
+    if bucket == "medium":
+        return (
+            "tutor.summary length: **150–320 English words** or **700–1600 Vietnamese characters**; cover early+mid+late."
+            if vi
+            else "tutor.summary length: **150–320 words**; cover early, middle, and late parts of the lecture."
+        )
+    if bucket == "long":
+        return (
+            "tutor.summary length: **260–520 English words** or **1100–2400 Vietnamese characters**; must reflect the full arc."
+            if vi
+            else "tutor.summary length: **260–520 words**; must reflect the full lecture arc."
+        )
+    return (
+        "tutor.summary length: **350–700 English words** or **1500–3200 Vietnamese characters** for very long recordings; stay structured (short paragraphs or bullets)."
+        if vi
+        else "tutor.summary length: **350–700 words** for very long recordings; use short paragraphs or bullets."
+    )
+
+
+def _timeline_prompt_rules(duration_s: float | None) -> str:
+    """Timeline coverage without dictating node count — each node must still be a main idea."""
+    if duration_s is None or (isinstance(duration_s, (int, float)) and float(duration_s) <= 0):
+        return (
+            "**Timeline (mindmap):** Spread `data.timestamp` across the **entire** recording. "
+            "**Forbidden:** only dense nodes at the start, then a jump to “Kết luận/Conclusion” with nothing substantive in between — "
+            "the **middle** must include nodes that each state a **precise** main point from the transcript at that time."
+        )
+    d = float(duration_s)
+    mins = d / 60.0
+    return (
+        f"**Timeline coverage** (≈ {mins:.0f} min / {d:.0f}s): "
+        f"(1) Split [0, {d:.0f}s] into four quarters. **Each quarter must contain at least one node** whose `data.timestamp` falls in that quarter, "
+        f"and that node's label must be a **real main idea** from that segment of the talk (not padding). "
+        f"(2) **No fixed number of nodes** — add nodes only where the lecture introduces a **distinct** important concept, result, or step. "
+        f"(3) **FORBIDDEN:** many shallow nodes early, then an empty middle and only a conclusion node — mid-timeline must have **accurate** content nodes. "
+        f"(4) Prefer fewer nodes that are **exact** over many vague ones."
+    )
+
+
+def _build_risen_knowledge_prompt(
+    *,
+    target_name: str,
+    target_lang_code: str,
+    difficulty_hint: str,
+    question_count: int,
+    video_title: str | None,
+    duration_s: float | None,
+    segment_lines: list[str],
+    multi_span_excerpt: str,
+    transcript_char_len: int,
+    kp_count: int,
+    extra_append: str = "",
+    timeline_rules_override: str | None = None,
+) -> str:
+    summary_bounds = _risen_tutor_summary_bounds(
+        duration_s=duration_s,
+        transcript_char_len=transcript_char_len,
+        target_lang_code=target_lang_code,
+    )
+    if duration_s is not None and float(duration_s) > 0:
+        ds = float(duration_s)
+        dur_line = f"{ds:.0f} seconds (~{ds / 60:.1f} min)"
+    else:
+        dur_line = "unknown (infer duration from segment timestamps and transcript length)"
+    scale_line = (
+        f"Transcript scale: ~{transcript_char_len} characters — longer lectures may need more distinct ideas on the map, "
+        f"but **never** sacrifice accuracy for quantity."
+    )
+    custom_tl = (timeline_rules_override or "").strip()
+    timeline_rules = custom_tl if custom_tl else _timeline_prompt_rules(duration_s)
+
+    body = f"""=== ROLE (Vai trò) ===
+You are a **senior instructional designer and learning engineer** specializing in extracting structured knowledge from **recorded video lectures** (YouTube / educational talks). You ground every claim in the provided transcript evidence.
+
+=== INSTRUCTION (Nhiệm vụ) ===
+Produce **exactly ONE** valid JSON object with **only** these top-level keys: `"react_flow"`, `"quiz"`, `"tutor"`.
+No markdown, no explanations, no code fences, no text before or after the JSON.
+
+=== CONTEXT (Bối cảnh / dữ liệu) ===
+- **Output language for learner-facing strings**: {target_name} (all node labels, quiz text, tutor.summary, key point texts in this language; if the spoken lecture differs, translate faithfully).
+- **Video title**: {video_title or "unknown"}
+- **Video duration**: {dur_line}
+- **Quiz difficulty**: {difficulty_hint}
+- **Number of quiz questions required**: {question_count}
+- {scale_line}
+
+**Transcript with segment timestamps (primary evidence):**
+{chr(10).join(segment_lines)}
+
+**Full-lecture text excerpts (BEGIN / MIDDLE / END — use together with segments; never summarize only the opening):**
+{multi_span_excerpt}
+
+=== EXECUTE (Định dạng & quy tắc thực thi) ===
+
+**JSON shape (strict):**
+- `"react_flow"`: React Flow graph `{{"nodes": [...], "edges": [...]}}`
+- `"quiz"`: object with `"title"`, optional `"description"`, `"questions"` array
+- `"tutor"`: object with `"summary"` (string) and `"key_points"` (array)
+
+**react_flow rules (precision over count):**
+- Each node: `"id"` (string), `"type": "neural"`, `"position": {{"x": number, "y": number}}`, `"data": {{"label": string, "timestamp": number}}`
+- **timestamp** (seconds, float) is mandatory — it must be the moment in the video where that **exact** idea is discussed (Deep Time-Linking).
+- **No quota on the number of nodes or edges.** Add as many nodes as the lecture **actually** needs to express its main threads; do **not** pad to hit a count. Quality rule: **every node must represent one clear main idea or piece of knowledge** (definition, theorem, step, contrast, example, result) that the speaker **really** treats at that time in the transcript. If two labels say the same thing, merge into one node.
+- **Labels (`data.label`):** Must be **specific** — technical terms, names, criteria, or a short noun phrase summarizing the **core** point spoken there. **Forbidden:** empty buzzwords ("Tổng quan", "Giới thiệu", "Kết luận", "Phần 1") **unless** the transcript at that timestamp is only introductory/concluding in a way that cannot be named more precisely; prefer the **actual subject** (e.g. "Định nghĩa X", "So sánh A và B", "Bước 3: …").
+- Build a clear hierarchy where it helps: theme → subtopics → details — only where the lecture structure supports it.
+- {timeline_rules}
+- **Edges:** Use `"type": "neuralFlow"` with `"id"`, `"source"`, `"target"` only to show **real** relationships (prerequisite, part-of, causes, contrasts). No minimum or maximum edge count.
+
+**quiz rules:**
+- Exactly **{question_count}** questions.
+- Each question: `"id"`, `"question"`, `"choices"` (4 strings), `"correct_index"` (0–3), `"explanation"`, `"evidence"` (1–2 items with transcript `start`, `end`, `text`), optional `"timestamp_seconds"`.
+- All questions must be answerable from the transcript.
+
+**tutor rules:**
+- {summary_bounds}
+- `"key_points"`: **{kp_count}** items: `{{"text": string, "timestamp_seconds": float}}`, spread across **early / mid / late**; at least one point with timestamp **≥85%** of duration when duration is known.
+
+=== NEXT GOAL (Mục tiêu đầu ra) ===
+The learner gets: (1) a mindmap where **each click** seeks to a **meaningful** moment and shows **correct** knowledge, (2) a fair quiz, (3) tutor text that reflects the **whole** lecture.
+
+=== QUALITY (Tư duy bổ trợ — áp dụng khi sinh JSON) ===
+- Plan first: list the lecture's **major ideas** along the timeline, then create one node per **non-redundant** main point — not one node per sentence.
+- **Accuracy > quantity:** remove or merge any node that is vague, duplicate, or not clearly grounded in the transcript at its timestamp.
+- Do not invent facts; wording must be traceable to what was said.
+- If the middle of the timeline is thin, add **only** nodes that capture **real** mid-lecture content, not placeholders.
+- Return **only** the JSON object.
+"""
+    extra = (extra_append or "").strip()
+    if extra:
+        return body + "\n\n=== ADMIN — Additional instructions (append) ===\n" + extra + "\n"
+    return body
+
+
+def _build_risen_tutor_qa_prompt(
+    *,
+    video_title: str | None,
+    seg_lines: list[str],
+    question: str,
+    max_citations: int,
+) -> str:
+    return f"""=== ROLE (Vai trò) ===
+You are an **expert AI tutor** for video-based courses. You answer using **only** the supplied transcript segments (RAG). You cite evidence faithfully.
+
+=== INSTRUCTION (Nhiệm vụ) ===
+Return **exactly ONE** JSON object, nothing else — no markdown, no code fences.
+
+Schema:
+{{
+  "answer": string,
+  "citations": [{{"start": number, "end": number, "text": string}}]
+}}
+
+=== CONTEXT (Bối cảnh) ===
+Video title (may be empty): {video_title or "unknown"}
+
+**Transcript segments (numbered; use only these for facts and citations):**
+{chr(10).join(seg_lines)}
+
+**Learner question:**
+{question}
+
+=== EXECUTE (Thực thi) ===
+- "answer": clear, helpful, **strictly grounded** in the segments; language should match the learner's question style when reasonable.
+- "citations": at most **{max_citations}** items; each citation text must match a provided segment (or its substring). If evidence is insufficient, state that briefly and use an empty citations array.
+
+=== NEXT GOAL (Mục tiêu) ===
+The learner gets a correct, traceable explanation tied to the lecture — no hallucinated content.
+
+=== QUALITY ===
+- Think step-by-step: which segments answer the question? Then compose the answer.
+- If critical information is missing from the segments, say so explicitly instead of guessing; do not fabricate.
+- If the question cannot be answered well without more context, state what is missing and keep citations empty or partial.
+- After drafting, briefly verify citations against segment text (play devil's advocate: would a skeptic accept each claim?).
+"""
 
 # Keep a preferred model first, then fallback candidates for API/version drift.
 GEMINI_MODELS = (
@@ -23,6 +251,42 @@ GEMINI_MODELS = (
     "gemini-2.0-flash-lite",
 )
 _BACKOFF_SECONDS = (2, 4, 8)
+
+
+def _groq_completion_confidence(completion: object) -> float | None:
+    """Map token log-probabilities to a single [0,1] score when the API returns logprobs."""
+    try:
+        choices = getattr(completion, "choices", None) or []
+        if not choices:
+            return None
+        lp = getattr(choices[0], "logprobs", None)
+        if lp is None:
+            return None
+        content = getattr(lp, "content", None)
+        if not isinstance(content, list) or not content:
+            return None
+        vals: list[float] = []
+        for tok in content:
+            v = getattr(tok, "logprob", None)
+            if isinstance(v, (int, float)):
+                vals.append(float(v))
+        if not vals:
+            return None
+        probs = [max(1e-12, math.exp(v)) for v in vals]
+        return max(0.0, min(1.0, sum(probs) / len(probs)))
+    except Exception:
+        return None
+
+
+def _gemini_response_confidence(response: object) -> float | None:
+    """Gemini SDK usually omits per-token logprobs; extend when available."""
+    try:
+        cands = getattr(response, "candidates", None)
+        if not isinstance(cands, list) or not cands:
+            return None
+        return None
+    except Exception:
+        return None
 
 
 class KnowledgeGenerationError(Exception):
@@ -35,6 +299,10 @@ class KnowledgeGenerationResult:
     quiz: dict[str, Any]
     tutor: dict[str, Any]
     raw_text: str | None = None
+    accuracy_metrics: dict[str, float] | None = None
+    provider_used: str | None = None
+    confidence: float | None = None
+    refined: bool = False
 
 
 class AIService:
@@ -64,6 +332,7 @@ class AIService:
             self._model = self._build_model(self._model_name)
 
         self._groq_client: Groq | None = Groq(api_key=self._groq_api_key) if self._groq_api_key else None
+        self._last_token_confidence: float | None = None
 
     @staticmethod
     def _select_key_segments(tr: TranscriptionResult, max_segments: int = 96) -> list[str]:
@@ -73,7 +342,11 @@ class AIService:
         segs = tr.segments
         if not segs:
             text = tr.text.strip()
-            return [text[:800]] if text else []
+            if not text:
+                return []
+            # Avoid only-first-800-chars bias when Whisper omits segments.
+            ex = AIService._multi_span_transcript_excerpt(tr, max_chars=2400)
+            return [ex] if ex else [text[:1200]]
 
         if len(segs) <= max_segments:
             return [f"[{s.start:.2f}s–{s.end:.2f}s] {s.text}" for s in segs]
@@ -86,6 +359,33 @@ class AIService:
             s = segs[idx]
             lines.append(f"[{s.start:.2f}s–{s.end:.2f}s] {s.text}")
         return lines
+
+    @staticmethod
+    def _multi_span_transcript_excerpt(tr: TranscriptionResult, *, max_chars: int = 4200) -> str:
+        """
+        Avoid biasing the LLM to only the first minutes: include start, middle, and end of `tr.text`.
+
+        A single `tr.text[:1200]` prefix made tutor summary / key points skew to the opening ~5 minutes.
+        """
+        text = (tr.text or "").strip()
+        if not text:
+            return ""
+        n = len(text)
+        if n <= max_chars:
+            return text
+        third = max(800, max_chars // 3)
+        head = text[:third]
+        mid0 = max(0, n // 2 - third // 2)
+        mid = text[mid0 : mid0 + third]
+        tail = text[max(0, n - third) :]
+        return (
+            "[BEGIN]\n"
+            f"{head}\n\n"
+            "[MIDDLE — ~mid lecture]\n"
+            f"{mid}\n\n"
+            "[END]\n"
+            f"{tail}"
+        )
 
     @staticmethod
     def _build_model(model_name: str) -> genai.GenerativeModel:
@@ -135,80 +435,76 @@ class AIService:
             else "Hard (deeper reasoning, nuance, tricky distractors)"
         )
 
-        # Mindmap density: scale with duration (no fixed hard limit in prompt).
-        # We still compute a guideline number to help the model size the outline.
-        node_target = 28
-        if duration_s and duration_s > 0:
-            # ~1 node / 90 seconds baseline; long-form gets more nodes.
-            node_target = int(max(28, round(duration_s / 90.0)))
-        edge_target = int(max(node_target - 1, round(node_target * 1.6)))
-
         # Notes density: spread points across full lecture.
         kp_count = 8
         if duration_s and duration_s > 0:
             kp_count = int(max(6, min(16, round(duration_s / 240.0))))  # ~1 key point / 4 minutes
 
-        prompt = f"""You are an instructional design assistant.
-You MUST output exactly ONE valid JSON object and nothing else.
-No markdown. No explanations. No code fences.
-The JSON object MUST have exactly these top-level keys: "react_flow", "quiz", "tutor".
+        transcript_char_len = len((tr.text or "").strip())
+        multi_excerpt = self._multi_span_transcript_excerpt(tr)
+        ov = load_prompt_overrides()
+        tlr = (ov.get("timeline_rules_override") or "").strip()
+        prompt = _build_risen_knowledge_prompt(
+            target_name=target_name,
+            target_lang_code=tl,
+            difficulty_hint=difficulty_hint,
+            question_count=question_count,
+            video_title=video_title,
+            duration_s=duration_s,
+            segment_lines=segment_lines,
+            multi_span_excerpt=multi_excerpt,
+            transcript_char_len=transcript_char_len,
+            kp_count=kp_count,
+            extra_append=ov.get("risen_knowledge_append") or "",
+            timeline_rules_override=tlr if tlr else None,
+        )
 
-Target language: {target_name}.
-Generate the React Flow nodes and edges in the target language.
-If the video is in English but target language is Vietnamese, translate all labels and summaries accurately.
+        base = self._execute_knowledge_prompt(prompt)
+        segs = [{"start": s.start, "end": s.end, "text": s.text} for s in tr.segments]
+        metrics = compute_accuracy_components(
+            transcript_text=tr.text,
+            tutor=base.tutor,
+            react_flow=base.react_flow,
+            segments=segs,
+        )
+        base.accuracy_metrics = metrics
 
-Quiz difficulty: {difficulty_hint}.
+        score = metrics.get("accuracy_score", 0.0)
+        if score < ACCURACY_REFINEMENT_THRESHOLD:
+            logger.info(
+                "Accuracy score %.3f below threshold %.2f; running refinement pass",
+                score,
+                ACCURACY_REFINEMENT_THRESHOLD,
+            )
+            try:
+                ref_extra = (ov.get("refinement_append") or "").strip()
+                ref_suffix = _REFINEMENT_PROMPT_SUFFIX + (
+                    "\n\n=== ADMIN — Refinement append ===\n" + ref_extra + "\n" if ref_extra else ""
+                )
+                refined = self._execute_knowledge_prompt(prompt + ref_suffix)
+                m2 = compute_accuracy_components(
+                    transcript_text=tr.text,
+                    tutor=refined.tutor,
+                    react_flow=refined.react_flow,
+                    segments=segs,
+                )
+                refined.accuracy_metrics = m2
+                refined.refined = True
+                if m2.get("accuracy_score", 0.0) >= score:
+                    refined.provider_used = refined.provider_used or base.provider_used
+                    return refined
+                base.refined = True
+                base.accuracy_metrics = metrics
+                return base
+            except Exception:
+                logger.exception("Refinement pass failed; keeping initial generation")
+                base.refined = True
 
-Video title (may be empty): {video_title or "unknown"}
+        return base
 
-Video duration seconds (may be empty): {duration_s if duration_s else "unknown"}
-
-Transcript with segment times:
-{chr(10).join(segment_lines)}
-
-Compact context summary (truncated):
-{tr.text[:1200]}{"..." if len(tr.text) > 1200 else ""}
-
-Rules for "react_flow":
-- Must be a React Flow compatible graph: {{"nodes": [...], "edges": [...]}}
-- Each node MUST include: "id" (string), "type": "neural", "position": {{"x": number, "y": number}}, "data": {{"label": string, "timestamp": number}}
-- "timestamp" is REQUIRED on every node: start time in seconds (float) for Deep Time-Linking to the video; pick the best matching second from the transcript for that concept.
-- Create a COMPLETE outline, not a uniform sampling. Prioritize important concepts over filler.
-- Use as many nodes as needed to capture the key ideas thoroughly (typically {node_target}+ for this duration), in a clear hierarchy: core → chapters → key ideas → details. Avoid filler; every node should add a distinct idea.
-- Core coverage requirement:
-  - Include 4–7 core concepts representing the main ideas of the whole lecture (not generic labels).
-  - For each chapter/section, include 2–4 concrete key ideas with specific terminology from the transcript.
-- Timeline coverage requirement:
-  - Do NOT only sample evenly. Still ensure the mindmap spans the full lecture end-to-end.
-  - When duration is known, include nodes near ~0%, ~25%, ~50%, ~75% and near the end (>= 85% of duration).
-  - Avoid putting many nodes at the same early timestamp; spread timestamps across the timeline while keeping importance.
-- Label quality:
-  - Labels must be specific (names, mechanisms, steps, criteria). Avoid vague labels like "Giới thiệu", "Kết luận" unless accompanied by concrete content.
-- Keep edges reasonable (aim around {edge_target}) and avoid disconnected islands unless necessary.
-- Each edge: "id", "source", "target", "type": "neuralFlow"
-
-Rules for "quiz":
-- Structured quiz for a quiz center UI: include "title", "description" (optional), "questions" as array.
-- Return exactly {question_count} questions.
-- Each question: "id", "question", "choices" (array of exactly 4 strings), "correct_index" (0–3),
-  "explanation" (1–2 sentences, grounded in transcript),
-  "evidence" (array of 1–2 items: {{"start": number, "end": number, "text": string}} copied from transcript),
-  optional "timestamp_seconds" (float).
-- Questions must be grounded in transcript segments.
-
-Rules for "tutor":
-- "summary": short markdown or plain summary string
-- "key_points": array of {kp_count} items: {{"text": string, "timestamp_seconds": float}}
-- Key points must cover the full lecture end-to-end (early/mid/late), not just the introduction.
-- When duration is known, at least 1 key point must be near the end (>= 85% of duration).
-
-Return ONLY valid JSON, no markdown fences.
-"""
-
-        # Provider order:
-        # - groq: try Groq first, then Google if available
-        # - google: try Google first, then Groq if available
-        # - auto: prefer Google if set, but fallback to Groq on ANY failure (quota/full/invalid JSON/etc.)
+    def _execute_knowledge_prompt(self, prompt: str) -> KnowledgeGenerationResult:
+        """Try providers in order until JSON validates; attaches provider_used and confidence."""
+        self._last_token_confidence = None
         order: list[str] = []
         if self._provider == "groq":
             order = ["groq", "google"]
@@ -237,11 +533,14 @@ Return ONLY valid JSON, no markdown fences.
                     payload = json.loads(cleaned)
 
                 self._validate_payload(payload)
+                conf = self._last_token_confidence
                 return KnowledgeGenerationResult(
                     react_flow=payload["react_flow"],
                     quiz=payload["quiz"],
                     tutor=payload["tutor"],
                     raw_text=raw,
+                    provider_used=prov,
+                    confidence=conf,
                 )
             except Exception as e:
                 last_err = e
@@ -289,31 +588,16 @@ Return ONLY valid JSON, no markdown fences.
         mc = int(max_citations) if isinstance(max_citations, int) else 3
         mc = max(0, min(8, mc))
 
-        prompt = f"""You are a helpful AI tutor. Answer the user's question using ONLY the transcript segments.
-
-You MUST return exactly ONE valid JSON object and nothing else.
-No markdown. No code fences.
-
-Schema:
-{{
-  "answer": string,
-  "citations": [{{"start": number, "end": number, "text": string}}]
-}}
-
-Rules:
-- "answer" must be concise, helpful, and grounded in the provided segments.
-- "citations" must contain at most {mc} items.
-- Each citation MUST be copied from one of the provided segments (same idea, use the segment text).
-- If the transcript doesn't contain enough info, say you don't have that info yet and keep citations empty.
-
-Video title (may be empty): {video_title or "unknown"}
-
-Transcript segments:
-{chr(10).join(seg_lines)}
-
-User question:
-{q}
-"""
+        ov = load_prompt_overrides()
+        qa_extra = (ov.get("tutor_qa_append") or "").strip()
+        prompt = _build_risen_tutor_qa_prompt(
+            video_title=video_title,
+            seg_lines=seg_lines,
+            question=q,
+            max_citations=mc,
+        )
+        if qa_extra:
+            prompt += "\n\n=== ADMIN — Additional instructions (append) ===\n" + qa_extra + "\n"
 
         order: list[str]
         if self._provider == "groq":
@@ -373,6 +657,7 @@ User question:
         raise KnowledgeGenerationError(str(last_err or "Tutor generation failed"))
 
     def _generate_json_text(self, prompt: str, *, provider: str) -> str:
+        self._last_token_confidence = None
         if provider == "groq":
             if self._groq_client is None:
                 raise KnowledgeGenerationError("GROQ_API_KEY is not set")
@@ -412,6 +697,7 @@ User question:
             raise KnowledgeGenerationError(f"Gemini request failed on all candidate models: {last_error}")
 
         raw = getattr(response, "text", None) or ""
+        self._last_token_confidence = _gemini_response_confidence(response)
         return str(raw)
 
     def _generate_with_google_backoff(self, prompt: str) -> object:
@@ -440,21 +726,31 @@ User question:
             last_error: Exception | None = None
             for model_name in groq_models:
                 try:
-                    completion = self._groq_client.chat.completions.create(
-                        model=model_name,
-                        temperature=0.2,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You must return exactly one valid JSON object with keys react_flow, quiz, tutor. "
-                                    "The JSON must follow the schema described by the user message. "
-                                    "Do NOT include markdown, code fences, comments, or any extra text."
-                                ),
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
+                    sys_msg = (
+                        "Follow the user's RISEN prompt: single JSON only, keys react_flow, quiz, tutor. "
+                        "Honor ROLE/INSTRUCTION/EXECUTE; output must match the schema in the user message. "
+                        "No markdown, code fences, or extra text."
                     )
+                    messages = [
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": prompt},
+                    ]
+                    completion = None
+                    try:
+                        completion = self._groq_client.chat.completions.create(
+                            model=model_name,
+                            temperature=0.2,
+                            logprobs=True,
+                            top_logprobs=1,
+                            messages=messages,
+                        )
+                    except Exception:
+                        completion = self._groq_client.chat.completions.create(
+                            model=model_name,
+                            temperature=0.2,
+                            messages=messages,
+                        )
+                    self._last_token_confidence = _groq_completion_confidence(completion)
                     text = completion.choices[0].message.content if completion.choices else ""
                     logger.info("Groq completion succeeded with model %s", model_name)
                     return str(text or "")

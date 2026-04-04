@@ -304,10 +304,12 @@ backend/
 
 ### 8.2 Admin UI (Control plane)
 - `GET http://127.0.0.1:8000/admin`
-- Gradio Admin Panel:
-  - Inputs: `GROQ_API_KEY`, `GOOGLE_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`
-  - Lưu vào `backend/.env` và reload pydantic settings cache
-  - Manual Trigger chạy full pipeline (Extract → Transcribe → AI → Save) và trả JSON kết quả
+- Gradio Admin Panel (tabs, **ds-surface-glass** styling — deep navy glass, violet accent):
+  - **System Config:** `GROQ_API_KEY`, `GOOGLE_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`, **`AI_PROVIDER`** (`auto` / `groq` / `google`); lưu `backend/.env` + reload `pydantic-settings`; **trạng thái kết nối** Groq / Google / Supabase (dot xanh/đỏ).
+  - **Live Pipeline:** Manual Trigger full pipeline (Extract → Transcribe → AI → Save); **live log** + **metrics real-time** (Timer ~0.6s): công thức **Score = 0.4·S + 0.4·T + 0.2·K** (S cosine summary↔transcript, T % node timestamp khớp segment ±2s, K keyword F1); sau AI có partial latency, sau persist có full latency + `pipeline_metrics` trong JSON response.
+  - **Analytics & Quality:** bảng gần đây từ Supabase **`system_logs`** (cần chạy `supabase/sql/system_logs.sql`); **Export** báo cáo đánh giá **CSV** / **PDF** (PDF cần `reportlab` trong venv).
+- Backend: mỗi run ghi **`system_logs`** (latency, provider, confidence, S/T/K, refined) khi Supabase cấu hình; nếu **accuracy &lt; 0.6** thì `ai_service` có **refinement pass** tự động regenerate mindmap/quiz/tutor.
+- API `POST /api/v1/extraction/audio` response thêm optional **`pipeline_metrics`** (latency, provider, confidence, accuracy components, refined).
 
 ### 8.3 Frontend rendering (Workspace)
 - `DashboardPage`: `Start pipeline` → `postAudioExtraction(url, user?.id)`; `useAppStore` fetch + **Realtime** `lectures`; thẻ **Processing** khi `status === 'processing'`.

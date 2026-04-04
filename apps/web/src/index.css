@@ -30,10 +30,15 @@
   html {
     font-size: 16px;
     overflow-x: clip;
+    scroll-behavior: auto;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: none;
   }
   body {
     @apply font-body antialiased text-ds-base text-ds-text-primary;
     overflow-x: clip;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: none;
   }
   .material-symbols-outlined {
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;

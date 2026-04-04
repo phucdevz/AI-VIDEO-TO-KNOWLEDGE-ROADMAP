@@ -1,12 +1,19 @@
-import { learningProgressStats } from '../../lib/mindmapLearning'
+import { useMemo } from 'react'
+import { learningProgressStats, milestoneSecondsFromReactFlowNodes } from '../../lib/mindmapLearning'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 
 /**
  * Badge % cố định góc màn hình (Workspace) — glass, tránh chồng mini-player.
+ * Tiến độ gắn với các mốc timestamp trên mindmap pipeline.
  */
 export function LearningProgressHud() {
   const t = useWorkspaceStore((s) => s.videoCurrentTimeSeconds)
-  const { percent, completed, total } = learningProgressStats(t)
+  const pipelineNodes = useWorkspaceStore((s) => s.pipelineReactFlow?.nodes)
+  const milestones = useMemo(
+    () => milestoneSecondsFromReactFlowNodes(pipelineNodes ?? null),
+    [pipelineNodes],
+  )
+  const { percent, completed, total } = learningProgressStats(t, milestones)
 
   return (
     <div

@@ -2,7 +2,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { KeyRound, Sliders, User } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PageMeta } from '../components/seo'
-import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
+import { getSupabase } from '../lib/supabase'
 import type { UserPrefsJson } from '../stores/useAppStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useAuthStore } from '../stores/useAuthStore'
@@ -45,12 +45,15 @@ export function SettingsPage() {
   const setGroqApiKey = useAppStore((s) => s.setGroqApiKey)
   const setGoogleApiKey = useAppStore((s) => s.setGoogleApiKey)
   const applyRemotePreferences = useAppStore((s) => s.applyRemotePreferences)
+  const persistLocalPreferences = useAppStore((s) => s.persistLocalPreferences)
 
   const pushToast = useToastStore((s) => s.pushToast)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prefsChannelRef = useRef<RealtimeChannel | null>(null)
   const [displayName, setDisplayName] = useState('')
-  /** false = bảng `user_preferences` chưa có trên Supabase — chỉ dùng state local, không gọi REST. */
+  const [savingName, setSavingName] = useState(false)
+  const [prefsSaving, setPrefsSaving] = useState(false)
+  /** false = bảng `user_preferences` chưa có trên Supabase — cloud sync tắt; vẫn lưu cục bộ. */
   const [prefsTableReady, setPrefsTableReady] = useState(true)
 
   useEffect(() => {
@@ -135,13 +138,43 @@ export function SettingsPage() {
     }
   }, [user?.id, applyRemotePreferences, pushToast])
 
-  const scheduleSave = () => {
-    if (!isSupabaseConfigured() || !user?.id || !prefsTableReady) return
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+    }
+  }, [])
+
+  const scheduleSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      void savePrefs()
+      persistLocalPreferences()
+      const supabase = getSupabase()
+      const uid = user?.id
+      if (supabase && uid && prefsTableReady) void savePrefs()
     }, 650)
-  }
+  }, [user?.id, prefsTableReady, savePrefs, persistLocalPreferences])
+
+  const saveDisplayName = useCallback(async () => {
+    const supabase = getSupabase()
+    if (!user || !supabase) {
+      pushToast('Đăng nhập để lưu tên hiển thị.', 'error')
+      return
+    }
+    const trimmed = displayName.trim()
+    setSavingName(true)
+    try {
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: trimmed, display_name: trimmed },
+      })
+      if (error) {
+        pushToast(`Lưu tên: ${error.message}`, 'error')
+        return
+      }
+      pushToast('Đã cập nhật tên hiển thị.', 'success')
+    } finally {
+      setSavingName(false)
+    }
+  }, [user, displayName, pushToast])
 
   return (
     <div className="mx-auto max-w-ds space-y-8 px-4 py-6 sm:px-6 md:px-8 md:py-8">
@@ -168,8 +201,8 @@ export function SettingsPage() {
             </code>{' '}
             (phần đầu tạo <code className="font-mono text-ds-secondary">user_preferences</code> và{' '}
             <code className="font-mono text-ds-secondary">quiz_results</code>), sau đó{' '}
-            <strong>Settings → API → Reload schema</strong> và tải lại trang. Trong lúc chờ, chỉnh sửa trên UI vẫn
-            hoạt động cục bộ nhưng không lưu cloud.
+            <strong>Settings → API → Reload schema</strong> và tải lại trang. Trong lúc chờ, tuỳ chọn vẫn được lưu
+            trên trình duyệt; đồng bộ đám mây cần bảng này.
           </p>
         </div>
       )}
@@ -184,11 +217,27 @@ export function SettingsPage() {
             <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
               Display name
             </label>
-            <input
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-ds-base text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
-            />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+              <input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void saveDisplayName()
+                }}
+                className="ds-transition min-w-0 flex-1 rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-ds-base text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
+              />
+              <button
+                type="button"
+                onClick={() => void saveDisplayName()}
+                disabled={savingName || !user}
+                className="ds-interactive shrink-0 rounded-ds-sm border border-ds-border bg-ds-bg/80 px-5 py-3 text-sm font-bold text-ds-text-primary hover:bg-ds-border/30 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {savingName ? 'Đang lưu…' : 'Lưu tên'}
+              </button>
+            </div>
+            {!user && (
+              <p className="mt-2 text-xs text-ds-text-secondary">Đăng nhập để lưu tên vào tài khoản.</p>
+            )}
           </div>
           <div>
             <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
@@ -219,12 +268,7 @@ export function SettingsPage() {
                   const v = e.target.value === 'en' ? 'en' : 'vi'
                   setLanguage(v)
                   scheduleSave()
-                  pushToast(
-                    v === 'vi'
-                      ? 'Đã đổi ngôn ngữ sang Tiếng Việt. Bài giảng tiếp theo sẽ được tạo bằng ngôn ngữ này.'
-                      : 'Đã đổi ngôn ngữ sang English. The next lecture will be generated in this language.',
-                    'default',
-                  )
+                  pushToast(v === 'vi' ? 'Đã chọn Tiếng Việt.' : 'Đã chọn English.', 'default')
                 }}
                 className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-sm text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
                 aria-label="Language"
@@ -243,6 +287,7 @@ export function SettingsPage() {
                 <button
                   key={v}
                   type="button"
+                  aria-pressed={summaryLength === v}
                   onClick={() => {
                     setSummaryLength(v)
                     scheduleSave()
@@ -267,6 +312,7 @@ export function SettingsPage() {
                 <button
                   key={v}
                   type="button"
+                  aria-pressed={quizDifficulty === v}
                   onClick={() => {
                     setQuizDifficulty(v)
                     scheduleSave()
@@ -289,6 +335,7 @@ export function SettingsPage() {
                 <button
                   key={t}
                   type="button"
+                  aria-pressed={uiTheme === t}
                   onClick={() => {
                     setUiTheme(t)
                     scheduleSave()
@@ -314,7 +361,8 @@ export function SettingsPage() {
           <h3 className="text-lg font-bold text-ds-text-primary">API keys</h3>
         </div>
         <p className="mb-6 text-sm text-ds-text-secondary">
-          Dữ liệu sẽ được lưu để đồng bộ cho tài khoản của bạn (khi sẵn sàng).
+          Luôn lưu trên trình duyệt; khi đã đăng nhập và có bảng <code className="font-mono text-xs">user_preferences</code>,
+          đồng bộ thêm lên Supabase.
         </p>
         <div className="space-y-4">
           <div>
@@ -351,17 +399,29 @@ export function SettingsPage() {
         <button
           type="button"
           onClick={async () => {
-            if (!prefsTableReady) {
-              pushToast('Tạo bảng user_preferences trên Supabase trước (xem ô cảnh báo phía trên).', 'error')
-              return
+            setPrefsSaving(true)
+            try {
+              persistLocalPreferences()
+              const supabase = getSupabase()
+              const uid = user?.id
+              if (!supabase || !uid) {
+                pushToast('Đã lưu trên trình duyệt. Đăng nhập để đồng bộ đám mây.', 'success')
+                return
+              }
+              if (!prefsTableReady) {
+                pushToast('Đã lưu trên trình duyệt. Thêm bảng user_preferences trên Supabase để đồng bộ đám mây.', 'default')
+                return
+              }
+              const ok = await savePrefs()
+              if (ok) pushToast('Đã lưu preferences (đám mây + trình duyệt).', 'success')
+            } finally {
+              setPrefsSaving(false)
             }
-            const ok = await savePrefs()
-            if (ok) pushToast('Đã lưu preferences.', 'success')
           }}
           className="ds-interactive mt-8 rounded-ds-sm bg-ds-primary px-8 py-3 text-sm font-bold text-ds-text-primary shadow-ds-soft hover:opacity-95 disabled:opacity-45"
-          disabled={!prefsTableReady}
+          disabled={prefsSaving}
         >
-          Save preferences now
+          {prefsSaving ? 'Đang lưu…' : 'Save preferences now'}
         </button>
       </section>
     </div>

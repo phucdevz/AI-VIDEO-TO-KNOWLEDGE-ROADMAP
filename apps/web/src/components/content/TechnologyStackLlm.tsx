@@ -3,21 +3,24 @@
  */
 type TechnologyStackLlmProps = {
   compact?: boolean
+  /** Dùng bên trong tab/panel — bỏ viền card ngoài để tránh lồng khung. */
+  embedded?: boolean
 }
 
-export function TechnologyStackLlm({ compact }: TechnologyStackLlmProps) {
-  return (
-    <section
-      className={`ds-surface-glass rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px] ${compact ? 'p-5' : 'p-6 sm:p-8'}`}
-      aria-labelledby="technology-stack-llm-heading"
-    >
-      <h2 id="technology-stack-llm-heading" className="text-lg font-bold text-ds-text-primary sm:text-xl">
-        Cách hệ thống hoạt động
-      </h2>
-      <p className="ds-text-body-secondary mt-2 text-sm">
+export function TechnologyStackLlm({ compact, embedded }: TechnologyStackLlmProps) {
+  const inner = (
+    <>
+      {!embedded && (
+        <h2 id="technology-stack-llm-heading" className="text-lg font-bold text-ds-text-primary sm:text-xl">
+          Cách hệ thống hoạt động
+        </h2>
+      )}
+      <p className={`ds-text-body-secondary text-sm ${embedded ? '' : 'mt-2'}`}>
         EtherAI xử lý video theo nhiều bước để tạo mindmap, quiz và analytics. Các bước chính được mô tả ngắn gọn dưới đây.
       </p>
-      <ul className={`mt-4 list-disc space-y-3 pl-5 text-sm text-ds-text-primary sm:text-base ${compact ? 'space-y-2' : ''}`}>
+      <ul
+        className={`list-disc space-y-3 pl-5 text-sm text-ds-text-primary sm:text-base ${compact ? 'space-y-2' : ''} ${embedded ? 'mt-3' : 'mt-4'}`}
+      >
         <li>
           <strong className="text-ds-text-primary">Speech-to-text:</strong>{' '}
           <span className="text-ds-text-secondary">
@@ -37,6 +40,19 @@ export function TechnologyStackLlm({ compact }: TechnologyStackLlmProps) {
           </span>
         </li>
       </ul>
+    </>
+  )
+
+  if (embedded) {
+    return <div className="space-y-1">{inner}</div>
+  }
+
+  return (
+    <section
+      className={`ds-surface-glass rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px] ${compact ? 'p-5' : 'p-6 sm:p-8'}`}
+      aria-labelledby="technology-stack-llm-heading"
+    >
+      {inner}
     </section>
   )
 }

@@ -1,6 +1,6 @@
-import { Bell, Menu, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
-import { useShell } from './ShellContext'
+import { AvatarWithNotificationBell } from './AvatarWithNotificationBell'
 import { useAuthStore } from '../../stores/useAuthStore'
 
 const TITLES: Record<string, string> = {
@@ -32,7 +32,6 @@ function SearchField({ className }: { className?: string }) {
 export function AppHeader() {
   const { pathname } = useLocation()
   const title = TITLES[pathname] ?? 'Dashboard'
-  const { mobileNavOpen, toggleMobileNav } = useShell()
   const user = useAuthStore((s) => s.user)
 
   const meta = user?.user_metadata as { full_name?: string; display_name?: string; avatar_url?: string } | undefined
@@ -47,53 +46,24 @@ export function AppHeader() {
     .toUpperCase() || '·'
 
   return (
-    <header className="ds-surface-glass sticky top-0 z-30 border-b border-ds-border shadow-ds-soft backdrop-blur-[10px]">
-      <div className="mx-auto flex flex-col gap-3 px-4 py-3 md:h-16 md:flex-row md:items-center md:gap-4 md:px-8">
+    <header className="ds-surface-glass sticky top-0 z-30 border-b border-ds-border shadow-ds-soft backdrop-blur-md md:backdrop-blur-[10px]">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 md:h-16 md:flex-row md:items-center md:gap-4 lg:px-8">
         <div className="flex items-center justify-between gap-3 md:contents">
           <div className="flex min-w-0 flex-1 items-center gap-3 md:order-1 md:flex-none">
-            <button
-              type="button"
-              className="ds-interactive-icon -ml-1 shrink-0 rounded-ds-sm p-2 text-ds-text-primary hover:bg-ds-border/30 md:hidden"
-              aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
-              aria-expanded={mobileNavOpen}
-              aria-controls="main-navigation"
-              onClick={toggleMobileNav}
-            >
-              <Menu className="h-6 w-6" strokeWidth={1.5} />
-            </button>
             <div className="min-w-0">
-              <h1 className="truncate text-base font-bold text-ds-text-primary sm:text-lg">{title}</h1>
+              <h1 className="truncate text-base font-bold text-ds-text-primary sm:text-lg md:text-xl">{title}</h1>
               <p className="hidden text-xs font-normal text-ds-text-secondary sm:block">
                 AI Video-to-Knowledge Roadmap
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 md:order-3">
-            <button
-              type="button"
-              className="ds-interactive-icon shrink-0 rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/30 hover:text-ds-secondary"
-              aria-label="Notifications"
-            >
-              <Bell className="h-6 w-6" strokeWidth={1.5} />
-            </button>
-            <div className="hidden items-center md:flex">
-              {avatarUrl ? (
-                <img
-                  src={avatarUrl}
-                  alt={displayName}
-                  title={displayName}
-                  className="h-9 w-9 rounded-full border border-ds-border bg-ds-bg object-cover shadow-ds-soft"
-                />
-              ) : (
-                <div
-                  className="flex h-9 w-9 items-center justify-center rounded-full border border-ds-border bg-ds-bg/50 text-xs font-bold text-ds-text-secondary shadow-ds-soft"
-                  aria-label={displayName}
-                  title={displayName}
-                >
-                  {initials}
-                </div>
-              )}
-            </div>
+          <div className="flex shrink-0 items-center md:order-3">
+            <AvatarWithNotificationBell
+              variant="header"
+              displayName={displayName}
+              avatarUrl={avatarUrl}
+              initials={initials}
+            />
           </div>
         </div>
 

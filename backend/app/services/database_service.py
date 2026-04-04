@@ -330,3 +330,32 @@ class DatabaseService:
             row_no_status = {k: v for k, v in row.items() if k != "status"}
             return self._upsert_row(row_no_status)
         return res
+
+    def insert_system_log(self, row: dict[str, Any]) -> None:
+        """
+        Persist pipeline / admin evaluation metrics to `system_logs` (optional table).
+        Fails softly if the table is missing or RLS blocks inserts.
+        """
+        if not self._client:
+            return
+        try:
+            self._client.table("system_logs").insert(row).execute()
+        except Exception:
+            logger.exception("system_logs insert skipped or failed")
+
+    def list_recent_system_logs(self, limit: int = 40) -> list[dict[str, Any]]:
+        if not self._client:
+            return []
+        try:
+            res = (
+                self._client.table("system_logs")
+                .select("*")
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            data = getattr(res, "data", None)
+            return data if isinstance(data, list) else []
+        except Exception:
+            logger.exception("system_logs list failed")
+            return []

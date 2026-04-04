@@ -1,9 +1,31 @@
 import { MAX_SEEK_SECONDS } from './validateSeekSeconds'
 
-/** Ngưỡng thời gian (giây) cho từng node demo — dùng tính % và tô màu đã xem. */
+/** Ngưỡng thời gian (giây) fallback khi chưa có mindmap pipeline (demo / workspace trống). */
 export const LEARNING_MILESTONE_THRESHOLDS_SECONDS = [0, 45, 252, 280, 320, 380, 420] as const
 
 const EPSILON_SEC = 0.75
+
+/** Shape tối thiểu để lấy mốc từ graph (tránh import vòng với mindmapToReactFlow). */
+export type MilestoneNodeInput = {
+  data?: { timestamp?: number; label?: string }
+}
+
+/**
+ * Mốc thời gian thực từ mindmap: mỗi `data.timestamp` khác nhau (giây), đã sort.
+ * Trả về `null` nếu không có node hoặc không có timestamp hợp lệ — UI dùng fallback demo.
+ */
+export function milestoneSecondsFromReactFlowNodes(
+  nodes: readonly MilestoneNodeInput[] | null | undefined,
+): readonly number[] | null {
+  if (!nodes?.length) return null
+  const set = new Set<number>()
+  for (const n of nodes) {
+    const t = Number(n.data?.timestamp)
+    if (Number.isFinite(t) && t >= 0) set.add(t)
+  }
+  if (set.size === 0) return null
+  return [...set].sort((a, b) => a - b)
+}
 
 export function extractMindmapNodeLabel(g: Element): string {
   const fo = g.querySelector('foreignObject')
@@ -94,16 +116,21 @@ export function resolveClipRangeFromMindmapLabel(label: string): { start: number
   return { start, end }
 }
 
-export function learningProgressStats(currentSeconds: number): {
+export function learningProgressStats(
+  currentSeconds: number,
+  milestoneSeconds?: readonly number[] | null,
+): {
   percent: number
   completed: number
   total: number
 } {
-  const total = LEARNING_MILESTONE_THRESHOLDS_SECONDS.length
-  const completed = LEARNING_MILESTONE_THRESHOLDS_SECONDS.filter(
-    (t) => currentSeconds >= t - EPSILON_SEC,
-  ).length
-  const percent = Math.min(100, Math.round((completed / total) * 100))
+  const thresholds =
+    milestoneSeconds != null && milestoneSeconds.length > 0
+      ? milestoneSeconds
+      : [...LEARNING_MILESTONE_THRESHOLDS_SECONDS]
+  const total = thresholds.length
+  const completed = thresholds.filter((t) => currentSeconds >= t - EPSILON_SEC).length
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0
   return { percent, completed, total }
 }
 

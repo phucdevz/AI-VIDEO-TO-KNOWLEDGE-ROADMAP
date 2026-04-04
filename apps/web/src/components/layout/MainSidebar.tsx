@@ -10,6 +10,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
+import { AvatarWithNotificationBell } from './AvatarWithNotificationBell'
 import { useAppStore } from '../../stores/useAppStore'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useShell } from './ShellContext'
@@ -33,9 +34,11 @@ export function MainSidebar() {
   const unbindLibrary = useAppStore((s) => s.unbindLibraryRealtime)
   const navigate = useNavigate()
 
-  const meta = user?.user_metadata as { full_name?: string; display_name?: string } | undefined
-  const displayName = meta?.full_name ?? meta?.display_name ?? user?.email ?? 'Guest'
+  const meta = user?.user_metadata as { full_name?: string; display_name?: string; avatar_url?: string } | undefined
+  const appMeta = user?.app_metadata as { full_name?: string; avatar_url?: string } | undefined
+  const displayName = meta?.full_name ?? meta?.display_name ?? appMeta?.full_name ?? user?.email ?? 'Guest'
   const email = user?.email ?? ''
+  const avatarUrl = meta?.avatar_url ?? appMeta?.avatar_url
   const initials = displayName
     .split(/\s+/)
     .map((w) => w[0])
@@ -53,7 +56,8 @@ export function MainSidebar() {
     <aside
       id="main-navigation"
       className={[
-        'ds-surface-glass shadow-ds-soft fixed left-0 top-0 z-[70] flex h-screen flex-col rounded-r-ds-lg border-r border-ds-border',
+        'hidden md:flex md:flex-col',
+        'ds-surface-glass shadow-ds-soft fixed left-0 top-0 z-[70] h-screen rounded-r-ds-lg border-r border-ds-border',
         'w-64 max-w-[min(100vw,20rem)] transition-transform duration-300 ease-out',
         'max-md:-translate-x-full',
         mobileNavOpen && 'max-md:translate-x-0',
@@ -163,17 +167,17 @@ export function MainSidebar() {
       >
         <div
           className={[
-            'ds-transition flex items-center gap-4 rounded-ds-lg px-2 py-4 hover:bg-ds-border/20',
+            'ds-transition flex items-center gap-4 overflow-visible rounded-ds-lg px-2 py-4 hover:bg-ds-border/20',
             'md:flex-col md:gap-2 md:py-3',
             sidebarCollapsed ? 'lg:flex-col lg:items-center lg:gap-2 lg:py-3' : 'lg:flex-row lg:gap-4 lg:py-4',
           ].join(' ')}
         >
-          <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-ds-sm border border-ds-border bg-ds-bg text-ds-text-secondary shadow-ds-soft"
-            aria-hidden
-          >
-            <span className="text-sm font-bold text-ds-secondary">{initials}</span>
-          </div>
+          <AvatarWithNotificationBell
+            variant="sidebar"
+            displayName={displayName}
+            avatarUrl={avatarUrl}
+            initials={initials}
+          />
           <div className={`min-w-0 flex-1 md:hidden ${sidebarCollapsed ? 'lg:hidden' : 'lg:block'}`}>
             <p className="truncate text-sm font-bold text-ds-text-primary">{displayName}</p>
             <p className="truncate text-xs font-normal text-ds-text-secondary">{email || '—'}</p>

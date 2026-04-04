@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 
 from app.config import get_settings
-from app.schemas.extraction import AudioExtractionResponse, KnowledgeChunkSchema
+from app.schemas.extraction import AudioExtractionResponse, KnowledgeChunkSchema, PipelineMetricsSchema
 from app.services.ai_service import AIService, KnowledgeGenerationError
 from app.services.audio_extraction import AudioExtractionError, AudioExtractionService
 from app.services.database_service import DatabaseService
+from app.services.mindmap_timeline_guard import ensure_react_flow_timeline_coverage
 from app.services.semantic_chunker import semantic_chunk_transcript
 from app.services.transcription_service import TranscriptionError, TranscriptionService
 
@@ -46,6 +48,11 @@ async def run_full_extraction_pipeline(
 def _emit(on_stage: Callable[[str], None] | None, message: str) -> None:
     if on_stage:
         on_stage(message)
+
+
+def _emit_metrics(on_metrics: Callable[[dict[str, object]], None] | None, payload: dict[str, object]) -> None:
+    if on_metrics:
+        on_metrics(payload)
 
 
 def _response_from_cached_row(url: str, row: dict) -> AudioExtractionResponse:
@@ -168,10 +175,12 @@ async def run_full_extraction_pipeline_with_progress(
     quiz_difficulty: str | None = "medium",
     force: bool = False,
     on_stage: Callable[[str], None] | None = None,
+    on_metrics: Callable[[dict[str, object]], None] | None = None,
 ) -> AudioExtractionResponse:
     """Extract → transcribe → chunk → Gemini → optional Supabase save with stage callback."""
     settings = get_settings()
     db_svc = DatabaseService(settings.supabase_url, settings.supabase_key)
+    t_pipeline0 = time.perf_counter()
 
     # Cache-first: avoid touching AI providers if we already have data.
     if not force:
@@ -252,11 +261,21 @@ async def run_full_extraction_pipeline_with_progress(
     except KnowledgeGenerationError as e:
         raise PipelineError(str(e)) from e
 
+    seg_dicts = [{"start": s.start, "end": s.end, "text": s.text} for s in tr.segments]
+    try:
+        knowledge.react_flow = ensure_react_flow_timeline_coverage(
+            knowledge.react_flow,
+            segments=seg_dicts,
+            duration=tr.duration,
+        )
+    except Exception:
+        logger.exception("Mindmap timeline coverage guard failed; using model react_flow as-is")
+
     # Guardrail: ensure tutor key points cover full video, especially for long lectures.
     try:
         knowledge.tutor = _ensure_key_points_cover_full_video(
             knowledge.tutor,
-            segments=[{"start": s.start, "end": s.end, "text": s.text} for s in tr.segments],
+            segments=seg_dicts,
             duration=tr.duration,
         )
     except Exception:
@@ -266,7 +285,7 @@ async def run_full_extraction_pipeline_with_progress(
         "text": tr.text,
         "language": tr.language,
         "duration": tr.duration,
-        "segments": [{"start": s.start, "end": s.end, "text": s.text} for s in tr.segments],
+        "segments": seg_dicts,
         "verbose": tr.raw_verbose,
     }
 
@@ -292,6 +311,49 @@ async def run_full_extraction_pipeline_with_progress(
 
     resolved_lecture_id = persist.lecture_id or placeholder_id
 
+    latency_ms = round((time.perf_counter() - t_pipeline0) * 1000.0, 2)
+    am2 = knowledge.accuracy_metrics or {}
+    pipeline_metrics = PipelineMetricsSchema(
+        latency_ms=latency_ms,
+        provider=knowledge.provider_used,
+        confidence=knowledge.confidence,
+        accuracy_score=am2.get("accuracy_score"),
+        similarity_s=am2.get("similarity_s"),
+        timestamp_t=am2.get("timestamp_t"),
+        keyword_f1_k=am2.get("keyword_f1_k"),
+        refined=bool(knowledge.refined),
+    )
+    _emit_metrics(
+        on_metrics,
+        {
+            "event": "pipeline_complete",
+            **pipeline_metrics.model_dump(),
+            "lecture_id": resolved_lecture_id,
+            "persisted": persist.ok,
+        },
+    )
+
+    log_row: dict[str, object] = {
+        "event_type": "pipeline_run",
+        "source_url": url,
+        "video_id": extract_result.video_id,
+        "lecture_id": resolved_lecture_id,
+        "provider": knowledge.provider_used,
+        "latency_ms": int(latency_ms),
+        "confidence": knowledge.confidence,
+        "accuracy_score": am2.get("accuracy_score"),
+        "accuracy_s": am2.get("similarity_s"),
+        "accuracy_t": am2.get("timestamp_t"),
+        "accuracy_k": am2.get("keyword_f1_k"),
+        "refined": knowledge.refined,
+        "detail": {
+            "persisted": persist.ok,
+            "persist_message": persist.message,
+            "user_id": user_id,
+        },
+    }
+    await asyncio.to_thread(db_svc.insert_system_log, log_row)
+
     return AudioExtractionResponse(
         video_id=extract_result.video_id,
         title=extract_result.title,
@@ -307,4 +369,5 @@ async def run_full_extraction_pipeline_with_progress(
         persisted=persist.ok,
         lecture_id=resolved_lecture_id,
         persist_message=persist.message if not persist.ok else None,
+        pipeline_metrics=pipeline_metrics,
     )

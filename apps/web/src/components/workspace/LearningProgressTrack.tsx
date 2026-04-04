@@ -1,4 +1,5 @@
-import { learningProgressStats } from '../../lib/mindmapLearning'
+import { useMemo } from 'react'
+import { learningProgressStats, milestoneSecondsFromReactFlowNodes } from '../../lib/mindmapLearning'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 
 type LearningProgressTrackProps = {
@@ -7,10 +8,16 @@ type LearningProgressTrackProps = {
 
 /**
  * Thanh tiến độ theo mốc mindmap vs currentTime video (chỉ hiển thị khi gắn vào panel).
+ * Mốc lấy từ `data.timestamp` trên graph pipeline; không có graph thì fallback demo.
  */
 export function LearningProgressTrack({ compact }: LearningProgressTrackProps) {
   const t = useWorkspaceStore((s) => s.videoCurrentTimeSeconds)
-  const { percent, completed, total } = learningProgressStats(t)
+  const pipelineNodes = useWorkspaceStore((s) => s.pipelineReactFlow?.nodes)
+  const milestones = useMemo(
+    () => milestoneSecondsFromReactFlowNodes(pipelineNodes ?? null),
+    [pipelineNodes],
+  )
+  const { percent, completed, total } = learningProgressStats(t, milestones)
 
   return (
     <div className={`w-full ${compact ? 'mb-2' : 'mb-3'}`}>

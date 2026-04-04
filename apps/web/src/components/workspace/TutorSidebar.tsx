@@ -171,6 +171,17 @@ export function TutorSidebar() {
       const q = normalize(question)
       const qTokens = new Set(q.split(' ').filter((t) => t.length >= 3).slice(0, 24))
 
+      const sortedByTime = [...contextPool].sort((a, b) => a.start - b.start)
+      const n = sortedByTime.length
+      /** Time-stratified chunks so RAG is never only the first ~minutes when overlap scores cluster early. */
+      const stratified: typeof contextPool = []
+      if (n > 0) {
+        for (const p of [0, 0.12, 0.25, 0.38, 0.5, 0.62, 0.75, 0.88, 0.96]) {
+          const idx = Math.min(n - 1, Math.max(0, Math.round((n - 1) * p)))
+          stratified.push(sortedByTime[idx]!)
+        }
+      }
+
       // Score by token overlap + length bonus.
       const scored = contextPool.map((s) => {
         const t = normalize(s.text)
@@ -182,30 +193,35 @@ export function TutorSidebar() {
       })
       scored.sort((a, b) => b.score - a.score)
 
-      const top = scored.filter((x) => x.score > 0).slice(0, 18).map((x) => x.s)
+      const top = scored.filter((x) => x.score > 0).slice(0, 16).map((x) => x.s)
 
-      // Always add a few evenly-spread anchors so answers can reference later parts.
-      const anchors: typeof contextPool = []
-      const n = contextPool.length
-      if (n > 0) {
-        for (const p of [0.1, 0.35, 0.6, 0.85]) {
-          anchors.push(contextPool[Math.min(n - 1, Math.max(0, Math.round((n - 1) * p)))]!)
+      const segKey = (s: (typeof contextPool)[0]) => `${Math.round(s.start * 10) / 10}:${Math.round(s.end * 10) / 10}`
+      const seen = new Set<string>()
+      const merged: typeof contextPool = []
+      for (const s of top) {
+        const k = segKey(s)
+        if (!seen.has(k)) {
+          seen.add(k)
+          merged.push(s)
+        }
+      }
+      for (const s of stratified) {
+        const k = segKey(s)
+        if (!seen.has(k)) {
+          seen.add(k)
+          merged.push(s)
         }
       }
 
-      const merged = [...top, ...anchors]
-      // De-dup close timestamps.
+      merged.sort((a, b) => a.start - b.start)
       const out: typeof contextPool = []
-      merged
-        .sort((a, b) => a.start - b.start)
-        .forEach((s) => {
-          const last = out[out.length - 1]
-          if (last && Math.abs(last.start - s.start) < 8) return
-          out.push(s)
-        })
+      merged.forEach((s) => {
+        const last = out[out.length - 1]
+        if (last && Math.abs(last.start - s.start) < 8) return
+        out.push(s)
+      })
 
-      // Keep payload small enough.
-      return out.slice(0, 26)
+      return out.slice(0, 30)
     },
     [contextPool],
   )
@@ -330,7 +346,7 @@ export function TutorSidebar() {
             </div>
             {!summaryCollapsed ? (
               <>
-                <div className="mt-4 max-h-40 space-y-3 overflow-y-auto pr-2">
+                <div className="mt-4 max-h-40 space-y-3 overflow-y-auto overscroll-y-contain pr-2">
                   <p className="text-sm font-normal leading-relaxed text-ds-text-secondary whitespace-pre-wrap">
                     {tutor?.summary?.trim()
                       ? tutor.summary
@@ -370,7 +386,7 @@ export function TutorSidebar() {
           <div className="flex min-h-0 flex-1 flex-col p-4">
             <h3 className="ds-text-label text-ds-text-secondary">AI tutor</h3>
             <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-ds-sm bg-ds-bg/60">
-              <div ref={chatHolderRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+              <div ref={chatHolderRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain p-4">
                 {chat.length === 0 ? (
                   <div className="rounded-ds-sm bg-ds-border/20 p-3 text-sm text-ds-text-primary">
                     Hỏi bất kỳ điều gì dựa trên nội dung bài giảng. Tutor sẽ trả lời kèm mốc thời gian để bạn nhảy tới đoạn liên quan.
@@ -478,7 +494,7 @@ export function TutorSidebar() {
               </button>
             </div>
           ) : null}
-          <div className="mt-4 flex-1 overflow-y-auto">
+          <div className="mt-4 flex-1 overflow-y-auto overscroll-y-contain">
             {mindmapHighlights.length === 0 ? (
               <div
                 className="flex flex-col items-center gap-3 rounded-ds-lg border border-ds-border border-dashed bg-ds-border/10 px-4 py-8 text-center"

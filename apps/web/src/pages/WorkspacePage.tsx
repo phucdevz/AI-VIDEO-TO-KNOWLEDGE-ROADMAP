@@ -173,7 +173,7 @@ export function WorkspacePage() {
   }, [])
 
   const scrollToVideo = useCallback(() => {
-    videoBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    videoBlockRef.current?.scrollIntoView({ behavior: 'auto', block: 'center' })
   }, [])
 
   const runExtraction = useCallback(async () => {
@@ -391,7 +391,7 @@ export function WorkspacePage() {
           </Link>
         </div>
       ) : (
-      <div className="flex min-h-[calc(100vh-4rem)] min-w-0 flex-col gap-3 overflow-x-clip overflow-y-auto px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4">
+      <div className="flex min-h-[calc(100vh-4rem)] min-w-0 flex-col gap-3 overflow-x-clip overflow-y-auto overscroll-y-contain px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4">
         <AnimatePresence initial={false}>
           {fullscreenPanel == null && (
             <motion.div

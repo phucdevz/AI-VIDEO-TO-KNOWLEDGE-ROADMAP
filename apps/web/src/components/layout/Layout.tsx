@@ -1,45 +1,14 @@
-import { useEffect } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { AppHeader } from './AppHeader'
 import { MainSidebar } from './MainSidebar'
+import { MobileDock } from './MobileDock'
 import { ShellProvider, useShell } from './ShellContext'
 
 function LayoutInner() {
-  const { pathname } = useLocation()
-  const { mobileNavOpen, setMobileNavOpen, sidebarCollapsed } = useShell()
-
-  useEffect(() => {
-    setMobileNavOpen(false)
-  }, [pathname, setMobileNavOpen])
-
-  useEffect(() => {
-    if (!mobileNavOpen) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [mobileNavOpen])
-
-  useEffect(() => {
-    if (!mobileNavOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMobileNavOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [mobileNavOpen, setMobileNavOpen])
+  const { sidebarCollapsed } = useShell()
 
   return (
     <div className="min-h-screen min-w-0 bg-ds-bg">
-      {mobileNavOpen && (
-        <button
-          type="button"
-          className="fixed inset-0 z-40 cursor-pointer bg-ds-bg/50 backdrop-blur-sm transition-opacity active:bg-ds-bg/60 md:hidden"
-          aria-label="Close navigation"
-          onClick={() => setMobileNavOpen(false)}
-        />
-      )}
       <MainSidebar />
       <div
         className={[
@@ -49,10 +18,11 @@ function LayoutInner() {
         ].join(' ')}
       >
         <AppHeader />
-        <main className="min-w-0 flex-1 pb-page-safe">
+        <main className="min-w-0 flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:pb-page-safe">
           <Outlet />
         </main>
       </div>
+      <MobileDock />
     </div>
   )
 }

@@ -48,6 +48,8 @@ type AppState = {
 
   applyThemeDocument: (theme: UiTheme) => void
   applyRemotePreferences: (prefs: UserPrefsJson) => void
+  /** Write current AI/UI prefs + API keys to localStorage (always safe; works offline / without Supabase table). */
+  persistLocalPreferences: () => void
 
   setLibraryLectures: (rows: LibraryLectureRow[]) => void
   mergeLibraryRow: (row: LibraryLectureRow) => void
@@ -66,24 +68,68 @@ function applyThemeToDom(theme: UiTheme) {
 }
 
 const LANGUAGE_STORAGE_KEY = 'etherai:language-v1'
+/** Full prefs snapshot for offline / no-DB fallback (theme, keys, quiz, summary, language). */
+const LOCAL_PREFS_KEY = 'etherai:app-prefs-v1'
+
+function readInitialFromLocal(): {
+  summaryLength?: AppState['summaryLength']
+  quizDifficulty?: AppState['quizDifficulty']
+  uiTheme?: UiTheme
+  language?: AppLanguage
+  groqApiKey?: string
+  googleApiKey?: string
+} {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(LOCAL_PREFS_KEY)
+    if (!raw) return {}
+    const p = JSON.parse(raw) as UserPrefsJson
+    const out: {
+      summaryLength?: AppState['summaryLength']
+      quizDifficulty?: AppState['quizDifficulty']
+      uiTheme?: UiTheme
+      language?: AppLanguage
+      groqApiKey?: string
+      googleApiKey?: string
+    } = {}
+    if (p.summaryLength === 'short' || p.summaryLength === 'medium' || p.summaryLength === 'long') {
+      out.summaryLength = p.summaryLength
+    }
+    if (p.quizDifficulty === 'easy' || p.quizDifficulty === 'medium' || p.quizDifficulty === 'hard') {
+      out.quizDifficulty = p.quizDifficulty
+    }
+    if (p.uiTheme === 'dark' || p.uiTheme === 'light') out.uiTheme = p.uiTheme
+    if (p.language === 'vi' || p.language === 'en') out.language = p.language
+    if (typeof p.groq_api_key === 'string') out.groqApiKey = p.groq_api_key
+    if (typeof p.google_api_key === 'string') out.googleApiKey = p.google_api_key
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function resolveInitialLanguage(local: ReturnType<typeof readInitialFromLocal>): AppLanguage {
+  if (local.language === 'en' || local.language === 'vi') return local.language
+  if (typeof window === 'undefined') return 'vi'
+  try {
+    const v = window.localStorage.getItem(LANGUAGE_STORAGE_KEY)
+    if (v === 'en' || v === 'vi') return v
+  } catch {
+    // ignore
+  }
+  return 'vi'
+}
+
+const initialLocal = readInitialFromLocal()
+const initialLanguage = resolveInitialLanguage(initialLocal)
 
 export const useAppStore = create<AppState>((set, get) => ({
-  summaryLength: 'medium',
-  quizDifficulty: 'medium',
-  uiTheme: 'dark',
-  language:
-    typeof window === 'undefined'
-      ? 'vi'
-      : ((() => {
-          try {
-            const v = window.localStorage.getItem(LANGUAGE_STORAGE_KEY)
-            return v === 'en' ? 'en' : 'vi'
-          } catch {
-            return 'vi'
-          }
-        })() as AppLanguage),
-  groqApiKey: '',
-  googleApiKey: '',
+  summaryLength: initialLocal.summaryLength ?? 'medium',
+  quizDifficulty: initialLocal.quizDifficulty ?? 'medium',
+  uiTheme: initialLocal.uiTheme ?? 'dark',
+  language: initialLanguage,
+  groqApiKey: initialLocal.groqApiKey ?? '',
+  googleApiKey: initialLocal.googleApiKey ?? '',
   libraryLectures: [],
   libraryRealtimeCleanup: null,
 
@@ -105,6 +151,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   setGoogleApiKey: (googleApiKey) => set({ googleApiKey }),
 
   applyThemeDocument: (theme) => applyThemeToDom(theme),
+
+  persistLocalPreferences: () => {
+    const s = get()
+    const prefs: UserPrefsJson = {
+      summaryLength: s.summaryLength,
+      quizDifficulty: s.quizDifficulty,
+      uiTheme: s.uiTheme,
+      language: s.language,
+      groq_api_key: s.groqApiKey || undefined,
+      google_api_key: s.googleApiKey || undefined,
+    }
+    try {
+      localStorage.setItem(LOCAL_PREFS_KEY, JSON.stringify(prefs))
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, s.language)
+    } catch {
+      // ignore quota / private mode
+    }
+  },
 
   applyRemotePreferences: (prefs) => {
     const next: Partial<AppState> = {}
@@ -129,6 +193,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (typeof prefs.groq_api_key === 'string') next.groqApiKey = prefs.groq_api_key
     if (typeof prefs.google_api_key === 'string') next.googleApiKey = prefs.google_api_key
     set(next)
+    get().persistLocalPreferences()
   },
 
   setLibraryLectures: (libraryLectures) => set({ libraryLectures }),
@@ -189,3 +254,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     })
   },
 }))
+
+if (typeof window !== 'undefined') {
+  applyThemeToDom(useAppStore.getState().uiTheme)
+}

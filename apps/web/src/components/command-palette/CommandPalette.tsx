@@ -270,7 +270,7 @@ export function CommandPalette() {
                 </kbd>
               </div>
               <ul
-                className="max-h-[min(50vh,320px)] overflow-y-auto p-2"
+                className="max-h-[min(50vh,320px)] overflow-y-auto overscroll-y-contain p-2"
                 role="listbox"
                 aria-label="Kết quả"
               >

@@ -203,7 +203,7 @@ export function AnalyticsPage() {
   const statLabel = (v: number | null) => (v === null ? '—' : String(v))
 
   return (
-    <div className="mx-auto max-w-ds space-y-8 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+    <div className="mx-auto max-w-ds min-w-0 space-y-8 px-4 py-6 sm:px-6 md:px-8 md:py-8">
       <PageMeta
         path="/analytics"
         title="Analytics"
@@ -235,7 +235,7 @@ export function AnalyticsPage() {
         </section>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-12">
+      <div className="grid min-w-0 gap-8 lg:grid-cols-12">
         <section className="ds-surface-glass min-w-0 rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-[10px] sm:p-8 lg:col-span-7">
           <h3 className="text-lg font-bold text-ds-text-primary">Skill coverage</h3>
           <p className="mt-2 text-sm text-ds-text-secondary">Radar scale theo điểm quiz trung bình (ước lượng)</p>
@@ -266,7 +266,7 @@ export function AnalyticsPage() {
           </div>
         </section>
 
-        <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px] lg:col-span-5">
+        <section className="ds-surface-glass min-w-0 rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-[10px] sm:p-8 lg:col-span-5">
           <h3 className="text-lg font-bold text-ds-text-primary">AI recommended</h3>
           <p className="mt-2 text-sm text-ds-text-secondary">Gợi ý dựa trên tiến độ và điểm quiz gần đây.</p>
           {recommended.length === 0 ? (
@@ -293,8 +293,8 @@ export function AnalyticsPage() {
           )}
         </section>
 
-        <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px] lg:col-span-12">
-          <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <section className="ds-surface-glass w-full max-w-full min-w-0 rounded-ds-lg border border-ds-border p-4 shadow-ds-soft backdrop-blur-[10px] sm:p-6 lg:col-span-12 lg:p-8">
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
               <h3 className="text-lg font-bold text-ds-text-primary">Learning activity</h3>
               <p className="mt-2 text-sm text-ds-text-secondary">12 tháng gần nhất (bài giảng + quiz)</p>
@@ -305,7 +305,7 @@ export function AnalyticsPage() {
               Chưa có dữ liệu hoạt động để hiển thị.
             </div>
           ) : (
-            <div className="grid gap-4 overflow-x-auto">
+            <div className="w-full max-w-full min-w-0">
               {(() => {
                 const weeks = Array.from({ length: Math.ceil(activityDays.length / 7) }).map((_, weekIdx) =>
                   activityDays.slice(weekIdx * 7, weekIdx * 7 + 7),
@@ -328,44 +328,50 @@ export function AnalyticsPage() {
                   return 'bg-emerald-500/70'
                 }
 
+                const gapWeek = 'gap-[2px] sm:gap-[3px] md:gap-1'
+                const gapDay = 'gap-[2px] sm:gap-[3px] md:gap-1'
+
                 return (
-                  <div className="min-w-[44rem]">
-                    <div className="mb-2 flex items-center gap-3">
-                      <div className="w-10 shrink-0" aria-hidden />
-                      <div className="grid grid-flow-col auto-cols-max gap-[6px]">
+                  <div className="w-full max-w-full min-w-0">
+                    <div className={`mb-1.5 flex w-full min-w-0 items-end ${gapWeek}`}>
+                      <div className="w-7 shrink-0 sm:w-9" aria-hidden />
+                      <div className={`flex min-w-0 flex-1 ${gapWeek}`}>
                         {monthLabels.map((m, i) => (
-                          <div key={`m-${i}`} className="w-4 text-[11px] text-ds-text-secondary">
-                            {m}
+                          <div
+                            key={`m-${i}`}
+                            className="min-w-0 flex-1 text-center text-[8px] leading-none text-ds-text-secondary sm:text-[9px] md:text-[10px]"
+                          >
+                            <span className="block truncate">{m}</span>
                           </div>
                         ))}
                       </div>
                     </div>
 
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 shrink-0 text-[11px] text-ds-text-secondary">
-                        <div className="grid grid-rows-7 gap-[6px] pt-[1px]">
+                    <div className={`flex w-full min-w-0 items-stretch ${gapWeek}`}>
+                      <div className="w-7 shrink-0 text-[8px] leading-tight text-ds-text-secondary sm:w-9 sm:text-[9px] md:text-[10px]">
+                        <div className={`grid h-full min-h-0 grid-rows-7 ${gapDay} pt-[1px]`}>
                           <div />
-                          <div>Mon</div>
+                          <div className="flex items-center">Mon</div>
                           <div />
-                          <div>Wed</div>
+                          <div className="flex items-center">Wed</div>
                           <div />
-                          <div>Fri</div>
+                          <div className="flex items-center">Fri</div>
                           <div />
                         </div>
                       </div>
 
-                      <div className="grid grid-flow-col auto-cols-max gap-[6px]">
+                      <div className={`flex min-w-0 flex-1 ${gapWeek}`}>
                         {weeks.map((week, weekIdx) => (
-                          <div key={`wk-${weekIdx}`} className="grid grid-rows-7 gap-[6px]">
+                          <div key={`wk-${weekIdx}`} className={`flex min-w-0 flex-1 flex-col ${gapDay}`}>
                             {week.map((d) => {
                               const v = d.lectures + d.quizzes
                               return (
                                 <div
                                   key={d.day}
                                   className={[
-                                    'h-3.5 w-3.5 rounded-[4px] border border-ds-border/60 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset]',
+                                    'aspect-square w-full min-w-[2px] rounded-[2px] border border-ds-border/60 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset] sm:rounded-[3px]',
                                     levelClass(v),
-                                    'transition-transform duration-150 ease-in-out hover:scale-[1.22] hover:border-emerald-300/60',
+                                    'transition-transform duration-150 ease-in-out hover:z-[1] hover:scale-125 hover:border-emerald-300/60',
                                   ].join(' ')}
                                   title={`${d.day}: ${d.lectures} bài giảng, ${d.quizzes} quiz`}
                                   aria-label={`${d.day}: ${d.lectures} bài giảng, ${d.quizzes} quiz`}
@@ -376,7 +382,7 @@ export function AnalyticsPage() {
                               ? Array.from({ length: 7 - week.length }).map((__, i) => (
                                   <div
                                     key={`pad-${weekIdx}-${i}`}
-                                    className="h-3.5 w-3.5 rounded-[4px] border border-transparent bg-transparent"
+                                    className="aspect-square w-full min-w-[2px] border border-transparent bg-transparent"
                                     aria-hidden
                                   />
                                 ))
@@ -386,22 +392,22 @@ export function AnalyticsPage() {
                       </div>
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-ds-text-secondary">
+                    <div className="mt-4 flex flex-col gap-3 text-xs text-ds-text-secondary sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                       <button
                         type="button"
-                        className="ds-interactive underline decoration-ds-border/50 underline-offset-4 hover:text-ds-text-primary"
+                        className="ds-interactive text-left underline decoration-ds-border/50 underline-offset-4 hover:text-ds-text-primary sm:text-right"
                         onClick={() => {
-                          // Placeholder: keep UI like GitHub without linking out.
+                          /* placeholder */
                         }}
                       >
                         Learn how we count contributions
                       </button>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                         <span>Less</span>
-                        <span className="h-3 w-3 rounded-[4px] border border-ds-border bg-ds-border/15" aria-hidden />
-                        <span className="h-3 w-3 rounded-[4px] border border-ds-border bg-emerald-500/25" aria-hidden />
-                        <span className="h-3 w-3 rounded-[4px] border border-ds-border bg-emerald-500/45" aria-hidden />
-                        <span className="h-3 w-3 rounded-[4px] border border-ds-border bg-emerald-500/70" aria-hidden />
+                        <span className="h-2.5 w-2.5 rounded-[3px] border border-ds-border bg-ds-border/15 sm:h-3 sm:w-3" aria-hidden />
+                        <span className="h-2.5 w-2.5 rounded-[3px] border border-ds-border bg-emerald-500/25 sm:h-3 sm:w-3" aria-hidden />
+                        <span className="h-2.5 w-2.5 rounded-[3px] border border-ds-border bg-emerald-500/45 sm:h-3 sm:w-3" aria-hidden />
+                        <span className="h-2.5 w-2.5 rounded-[3px] border border-ds-border bg-emerald-500/70 sm:h-3 sm:w-3" aria-hidden />
                         <span>More</span>
                       </div>
                     </div>

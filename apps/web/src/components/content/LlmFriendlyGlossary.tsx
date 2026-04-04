@@ -26,9 +26,28 @@ const GLOSSARY_ENTRIES = [
 type LlmFriendlyGlossaryProps = {
   /** Thu gọn khoảng cách (trang chủ / auth). */
   compact?: boolean
+  /** Bên trong tab — không bọc card, ẩn tiêu đề trùng với tab. */
+  embedded?: boolean
 }
 
-export function LlmFriendlyGlossary({ compact }: LlmFriendlyGlossaryProps) {
+export function LlmFriendlyGlossary({ compact, embedded }: LlmFriendlyGlossaryProps) {
+  const dl = (
+    <dl className={`space-y-6 ${compact ? 'space-y-4' : ''} ${embedded ? 'mt-0 max-h-[min(42vh,22rem)] overflow-y-auto pr-1' : 'mt-6'}`}>
+        {GLOSSARY_ENTRIES.map(({ id, term, definition }) => (
+          <div key={id}>
+            <dt id={id} className="text-base font-bold text-ds-text-primary">
+              <dfn>{term}</dfn>
+            </dt>
+            <dd className="ds-text-body-secondary mt-2 text-sm sm:text-base">{definition}</dd>
+          </div>
+        ))}
+    </dl>
+  )
+
+  if (embedded) {
+    return <div className="space-y-1">{dl}</div>
+  }
+
   return (
     <section
       className={`ds-surface-glass rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px] ${compact ? 'p-5' : 'p-6 sm:p-8'}`}
@@ -40,16 +59,7 @@ export function LlmFriendlyGlossary({ compact }: LlmFriendlyGlossaryProps) {
       <p className="ds-text-body-secondary mt-2 text-sm">
         Các định nghĩa dưới đây mô tả khái niệm dùng trong sản phẩm EtherAI — AI Video-to-Knowledge Roadmap.
       </p>
-      <dl className={`mt-6 space-y-6 ${compact ? 'space-y-4' : ''}`}>
-        {GLOSSARY_ENTRIES.map(({ id, term, definition }) => (
-          <div key={id}>
-            <dt id={id} className="text-base font-bold text-ds-text-primary">
-              <dfn>{term}</dfn>
-            </dt>
-            <dd className="ds-text-body-secondary mt-2 text-sm sm:text-base">{definition}</dd>
-          </div>
-        ))}
-      </dl>
+      {dl}
     </section>
   )
 }

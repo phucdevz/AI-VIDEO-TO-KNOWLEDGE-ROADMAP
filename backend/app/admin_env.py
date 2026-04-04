@@ -12,6 +12,7 @@ _ENV_KEYS = (
     "GOOGLE_API_KEY",
     "SUPABASE_URL",
     "SUPABASE_KEY",
+    "AI_PROVIDER",
 )
 
 
