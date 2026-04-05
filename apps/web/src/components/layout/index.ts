@@ -1,4 +1,5 @@
 export { AppHeader } from './AppHeader'
 export { Layout } from './Layout'
 export { MainSidebar } from './MainSidebar'
+export { MobileDock } from './MobileDock'
 export { ShellProvider, useShell } from './ShellContext'

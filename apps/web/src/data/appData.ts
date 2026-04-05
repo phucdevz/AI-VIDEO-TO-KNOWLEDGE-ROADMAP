@@ -1,4 +1,87 @@
+/**
+ * Dữ liệu tĩnh / demo gom một chỗ: thư viện bài giảng, timeline JSON-LD, Knowledge Pack & quiz xuất.
+ */
+
 import type { MindmapHighlightBookmark } from '../stores/useWorkspaceStore'
+
+// --- Lectures (mock library — đồng bộ Dashboard ↔ Workspace ?lecture=) ---
+
+export type LectureRecord = {
+  id: string
+  title: string
+  course: string
+  progress: number
+  duration: string
+  /** Bài đã kiểm duyệt — dùng cho sitemap / SEO. */
+  is_verified: boolean
+}
+
+export const MOCK_LECTURES: LectureRecord[] = [
+  {
+    id: '1',
+    title: 'Neural Architecture Search',
+    course: 'Deep Learning',
+    progress: 90,
+    duration: '1h 24m',
+    is_verified: true,
+  },
+  {
+    id: '2',
+    title: 'Digital Scarcity Economics',
+    course: 'Web3',
+    progress: 72,
+    duration: '45m',
+    is_verified: true,
+  },
+  {
+    id: '3',
+    title: 'Urban Design 2050',
+    course: 'Architecture',
+    progress: 95,
+    duration: '58m',
+    is_verified: true,
+  },
+  {
+    id: '4',
+    title: 'Transformer Attention',
+    course: 'NLP',
+    progress: 40,
+    duration: '32m',
+    is_verified: true,
+  },
+  {
+    id: '5',
+    title: 'RAG for Lectures',
+    course: 'AI Systems',
+    progress: 15,
+    duration: '1h 05m',
+    is_verified: false,
+  },
+  {
+    id: '6',
+    title: 'Exam Prep: Graphs',
+    course: 'Algorithms',
+    progress: 60,
+    duration: '50m',
+    is_verified: false,
+  },
+]
+
+/** Mốc thời gian demo (đồng bộ Mindmap deep-links + JSON-LD Clip). */
+export type TimelineSegment = { id: string; label: string; startSeconds: number }
+
+export const DEFAULT_TIMELINE_SEGMENTS: TimelineSegment[] = [
+  { id: 's1', label: 'Introduction & goals', startSeconds: 0 },
+  { id: 's2', label: 'Attention mechanism', startSeconds: 252 },
+  { id: 's3', label: 'Multi-head depth', startSeconds: 512 },
+]
+
+export function getLectureById(id: string | null | undefined): LectureRecord | undefined {
+  if (!id) return undefined
+  return MOCK_LECTURES.find((l) => l.id === id)
+}
+
+// --- Knowledge Pack / quiz xuất ---
 
 /** Câu hỏi trắc nghiệm xuất kèm Knowledge Pack (đáp án gợi ý khi in/ôn offline). */
 export type WorkspaceQuizExportItem = {

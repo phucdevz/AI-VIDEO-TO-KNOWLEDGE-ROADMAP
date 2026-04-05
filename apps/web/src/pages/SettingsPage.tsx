@@ -1,8 +1,9 @@
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { KeyRound, Sliders, User } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Check, ChevronDown, KeyRound, Sliders, User } from 'lucide-react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { PageMeta } from '../components/seo'
 import { getSupabase } from '../lib/supabase'
+import { friendlySupabaseError } from '../lib/userFacingErrors'
 import type { UserPrefsJson } from '../stores/useAppStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useAuthStore } from '../stores/useAuthStore'
@@ -27,6 +28,95 @@ function isUserPreferencesTableMissing(err: { message?: string; code?: string } 
   return m.includes('user_preferences') && (m.includes('schema cache') || m.includes('does not exist'))
 }
 
+const LANGUAGE_OPTIONS = [
+  { value: 'vi' as const, label: 'Tiếng Việt' },
+  { value: 'en' as const, label: 'English' },
+]
+
+function LanguageSelect(props: {
+  value: 'vi' | 'en'
+  onChange: (v: 'vi' | 'en') => void
+  id: string
+  labelId: string
+}) {
+  const { value, onChange, id, labelId } = props
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const listId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const current = LANGUAGE_OPTIONS.find((o) => o.value === value) ?? LANGUAGE_OPTIONS[0]
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        id={id}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((o) => !o)}
+        className="ds-transition flex w-full items-center justify-between gap-3 rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-left text-sm font-medium text-ds-text-primary shadow-ds-soft hover:border-ds-primary/50 focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
+      >
+        <span>{current.label}</span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-ds-text-secondary transition-transform ${open ? 'rotate-180' : ''}`}
+          strokeWidth={2}
+          aria-hidden
+        />
+      </button>
+      {open ? (
+        <ul
+          id={listId}
+          role="listbox"
+          aria-labelledby={labelId}
+          className="absolute left-0 right-0 top-[calc(100%+6px)] z-[120] overflow-hidden rounded-ds-sm border border-ds-border/90 bg-[rgba(16,30,56,0.97)] py-1 shadow-[0_16px_48px_rgba(0,0,0,0.55),0_0_0_1px_rgba(124,77,255,0.12)] backdrop-blur-[12px]"
+        >
+          {LANGUAGE_OPTIONS.map((opt) => {
+            const selected = opt.value === value
+            return (
+              <li key={opt.value} role="presentation">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className={`flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left text-sm font-medium transition-colors ${
+                    selected
+                      ? 'bg-ds-primary/25 text-ds-text-primary'
+                      : 'text-ds-text-secondary hover:bg-ds-border/25 hover:text-ds-text-primary'
+                  }`}
+                  onClick={() => {
+                    onChange(opt.value)
+                    setOpen(false)
+                  }}
+                >
+                  {opt.label}
+                  {selected ? <Check className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={2} aria-hidden /> : null}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
 /**
  * Profile, AI preferences, API keys — persisted to `user_preferences` + realtime sync.
  */
@@ -48,6 +138,7 @@ export function SettingsPage() {
   const persistLocalPreferences = useAppStore((s) => s.persistLocalPreferences)
 
   const pushToast = useToastStore((s) => s.pushToast)
+  const languageFieldId = useId()
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prefsChannelRef = useRef<RealtimeChannel | null>(null)
   const [displayName, setDisplayName] = useState('')
@@ -79,7 +170,7 @@ export function SettingsPage() {
         setPrefsTableReady(false)
         return false
       }
-      pushToast(`Lưu preferences: ${error.message}`, 'error')
+      pushToast(friendlySupabaseError(error), 'error')
       return false
     }
     return true
@@ -101,7 +192,7 @@ export function SettingsPage() {
           setPrefsTableReady(false)
           return
         }
-        pushToast(`Đọc preferences: ${error.message}`, 'error')
+        pushToast(friendlySupabaseError(error), 'error')
         return
       }
       setPrefsTableReady(true)
@@ -167,7 +258,7 @@ export function SettingsPage() {
         data: { full_name: trimmed, display_name: trimmed },
       })
       if (error) {
-        pushToast(`Lưu tên: ${error.message}`, 'error')
+        pushToast(friendlySupabaseError(error), 'error')
         return
       }
       pushToast('Đã cập nhật tên hiển thị.', 'success')
@@ -177,7 +268,7 @@ export function SettingsPage() {
   }, [user, displayName, pushToast])
 
   return (
-    <div className="mx-auto max-w-ds space-y-8 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+    <div className="mx-auto w-full max-w-7xl space-y-8 px-4 py-6 sm:px-6 lg:px-8 md:py-8">
       <PageMeta
         path="/settings"
         title="Settings"
@@ -193,16 +284,10 @@ export function SettingsPage() {
           role="status"
           className="rounded-ds-lg border border-ds-secondary/40 bg-ds-secondary/10 px-4 py-4 text-sm text-ds-text-primary"
         >
-          <p className="font-bold text-ds-secondary">Chưa có bảng `user_preferences` trên Supabase</p>
+          <p className="font-bold text-ds-secondary">Đồng bộ tài khoản trên đám mây chưa khả dụng</p>
           <p className="mt-2 text-ds-text-secondary">
-            Mở <strong>Supabase → SQL Editor</strong>, chạy toàn bộ file{' '}
-            <code className="rounded-ds-sm bg-ds-bg/80 px-1.5 py-0.5 font-mono text-xs text-ds-secondary">
-              supabase/sql/lectures_pipeline_columns.sql
-            </code>{' '}
-            (phần đầu tạo <code className="font-mono text-ds-secondary">user_preferences</code> và{' '}
-            <code className="font-mono text-ds-secondary">quiz_results</code>), sau đó{' '}
-            <strong>Settings → API → Reload schema</strong> và tải lại trang. Trong lúc chờ, tuỳ chọn vẫn được lưu
-            trên trình duyệt; đồng bộ đám mây cần bảng này.
+            Cài đặt của bạn vẫn được lưu trên thiết bị. Để đồng bộ giữa các máy và lưu an toàn lâu dài, cần hoàn tất
+            cấu hình phía máy chủ — người quản trị hệ thống có thể tham khảo tài liệu triển khai đi kèm mã nguồn.
           </p>
         </div>
       )}
@@ -259,23 +344,25 @@ export function SettingsPage() {
           <h3 className="text-lg font-bold text-ds-text-primary">AI & UI preferences</h3>
         </div>
         <div className="grid gap-8 md:grid-cols-2">
-          <div>
-            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-ds-text-secondary">Language</p>
+          <div className="relative z-10 min-w-0">
+            <label
+              id={`${languageFieldId}-label`}
+              htmlFor={languageFieldId}
+              className="mb-4 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary"
+            >
+              Language
+            </label>
             <div className="max-w-sm">
-              <select
+              <LanguageSelect
+                id={languageFieldId}
+                labelId={`${languageFieldId}-label`}
                 value={language}
-                onChange={(e) => {
-                  const v = e.target.value === 'en' ? 'en' : 'vi'
+                onChange={(v) => {
                   setLanguage(v)
                   scheduleSave()
                   pushToast(v === 'vi' ? 'Đã chọn Tiếng Việt.' : 'Đã chọn English.', 'default')
                 }}
-                className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-sm text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
-                aria-label="Language"
-              >
-                <option value="vi">Tiếng Việt</option>
-                <option value="en">English</option>
-              </select>
+              />
             </div>
           </div>
           <div>
@@ -361,8 +448,7 @@ export function SettingsPage() {
           <h3 className="text-lg font-bold text-ds-text-primary">API keys</h3>
         </div>
         <p className="mb-6 text-sm text-ds-text-secondary">
-          Luôn lưu trên trình duyệt; khi đã đăng nhập và có bảng <code className="font-mono text-xs">user_preferences</code>,
-          đồng bộ thêm lên Supabase.
+          Được lưu cục bộ trên trình duyệt; khi đồng bộ đám mây đã bật, khóa sẽ được mã hóa đồng bộ theo tài khoản.
         </p>
         <div className="space-y-4">
           <div>
@@ -405,15 +491,18 @@ export function SettingsPage() {
               const supabase = getSupabase()
               const uid = user?.id
               if (!supabase || !uid) {
-                pushToast('Đã lưu trên trình duyệt. Đăng nhập để đồng bộ đám mây.', 'success')
+                pushToast('Đã lưu trên thiết bị. Đăng nhập để đồng bộ khi tính năng sẵn sàng.', 'success')
                 return
               }
               if (!prefsTableReady) {
-                pushToast('Đã lưu trên trình duyệt. Thêm bảng user_preferences trên Supabase để đồng bộ đám mây.', 'default')
+                pushToast(
+                  'Đã lưu trên thiết bị. Đồng bộ đám mây sẽ bật khi hệ thống được thiết lập đầy đủ.',
+                  'default',
+                )
                 return
               }
               const ok = await savePrefs()
-              if (ok) pushToast('Đã lưu preferences (đám mây + trình duyệt).', 'success')
+              if (ok) pushToast('Đã lưu cài đặt (đám mây và thiết bị).', 'success')
             } finally {
               setPrefsSaving(false)
             }
@@ -421,7 +510,7 @@ export function SettingsPage() {
           className="ds-interactive mt-8 rounded-ds-sm bg-ds-primary px-8 py-3 text-sm font-bold text-ds-text-primary shadow-ds-soft hover:opacity-95 disabled:opacity-45"
           disabled={prefsSaving}
         >
-          {prefsSaving ? 'Đang lưu…' : 'Save preferences now'}
+          {prefsSaving ? 'Đang lưu…' : 'Lưu cài đặt ngay'}
         </button>
       </section>
     </div>

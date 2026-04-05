@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { DashboardIntroTabs } from '../components/content'
 import { PageMeta } from '../components/seo'
-import { MOCK_LECTURES } from '../data/lectures'
+import { MOCK_LECTURES } from '../data/appData'
 import { postAudioExtraction } from '../lib/api'
 import { isSupabaseConfigured } from '../lib/supabase'
 import { useAppStore, type LibraryLectureRow } from '../stores/useAppStore'
@@ -65,6 +65,17 @@ type GridItem =
 const LS_VIEW = 'etherai:dashboard-library-view'
 const LS_FILTER = 'etherai:dashboard-library-filter'
 
+/** Staged copy while `postAudioExtraction` runs (no server-side progress stream). */
+const PIPELINE_STEPS_VI = [
+  'Đang chuẩn bị yêu cầu…',
+  'Đang tải và xử lý video…',
+  'Đang trích xuất âm thanh / transcript…',
+  'AI đang sinh mindmap, quiz và tutor…',
+] as const
+
+const PIPELINE_STEP_MS = 3200
+const PIPELINE_TICK_MS = 480
+
 /** Lọc bài giảng (Supabase có status; mock chỉ lọc theo progress). */
 type LibraryStatusFilter = 'all' | 'processing' | 'with_mindmap'
 
@@ -93,6 +104,8 @@ export function DashboardPage() {
   const [pipelineUrlDraft, setPipelineUrlDraft] = useState('')
   const [libraryQuery, setLibraryQuery] = useState('')
   const [pipelineBusy, setPipelineBusy] = useState(false)
+  const [pipelineProgress, setPipelineProgress] = useState(0)
+  const [pipelineStep, setPipelineStep] = useState(0)
   const [gridLoading, setGridLoading] = useState(true)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(loadStoredView)
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>(loadStoredFilter)
@@ -131,6 +144,29 @@ export function DashboardPage() {
       /* ignore */
     }
   }, [viewMode])
+
+  useEffect(() => {
+    if (!pipelineBusy) {
+      setPipelineProgress(0)
+      setPipelineStep(0)
+      return
+    }
+    setPipelineProgress(6)
+    setPipelineStep(0)
+    const creep = window.setInterval(() => {
+      setPipelineProgress((p) => {
+        if (p >= 92) return p
+        return Math.min(92, p + Math.max(0.35, (92 - p) * 0.055))
+      })
+    }, PIPELINE_TICK_MS)
+    const steps = window.setInterval(() => {
+      setPipelineStep((s) => (s + 1) % PIPELINE_STEPS_VI.length)
+    }, PIPELINE_STEP_MS)
+    return () => {
+      clearInterval(creep)
+      clearInterval(steps)
+    }
+  }, [pipelineBusy])
 
   useEffect(() => {
     try {
@@ -189,15 +225,15 @@ export function DashboardPage() {
     'ds-interactive-card ds-surface-glass group min-h-0 min-w-0 rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px] hover:border-ds-primary/40'
 
   return (
-    <div className="mx-auto max-w-ds space-y-6 px-4 py-5 sm:px-6 md:px-8 md:py-6">
+    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-5 sm:px-6 lg:px-8 md:py-6">
       <PageMeta
         path="/dashboard"
         title="Library"
         description="EtherAI Library: thư viện bài giảng, pipeline phân tích và workspace deep time-linking."
       />
       <header className="space-y-1">
-        <h1 className="text-2xl font-bold tracking-tight text-ds-text-primary sm:text-3xl">EtherAI Library</h1>
-        <p className="max-w-2xl text-sm text-ds-text-secondary sm:text-base">
+        <h1 className="text-xl font-bold tracking-tight text-ds-text-primary sm:text-2xl md:text-3xl">EtherAI Library</h1>
+        <p className="max-w-2xl text-sm text-ds-text-secondary sm:text-base md:text-lg">
           Phân tích video bài giảng → mindmap, quiz và workspace có deep time-linking.
         </p>
       </header>
@@ -243,8 +279,9 @@ export function DashboardPage() {
             <input
               value={pipelineUrlDraft}
               onChange={(e) => setPipelineUrlDraft(e.target.value)}
+              disabled={pipelineBusy}
               placeholder="https://youtube.com/watch?v=…"
-              className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 py-4 pl-12 pr-4 text-ds-base text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
+              className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 py-4 pl-12 pr-4 text-ds-base text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
               aria-label="URL bài giảng cho pipeline"
             />
           </div>
@@ -261,21 +298,61 @@ export function DashboardPage() {
               setPipelineBusy(true)
               try {
                 const data = await postAudioExtraction(url, user?.id ?? null, language, quizDifficulty)
+                setPipelineProgress(100)
                 setPipelineResult(data)
                 pushToast('Đã chạy pipeline — mở Workspace để xem mindmap.', 'success')
                 if (user?.id) void fetchLibraryLectures()
+                await new Promise((r) => setTimeout(r, 380))
                 navigate('/workspace')
               } catch {
-                pushToast('Pipeline thất bại. Kiểm tra backend log / keys API.', 'error')
+                pushToast('Không xử lý được video. Kiểm tra mạng, URL hoặc thử lại sau.', 'error')
               } finally {
                 setPipelineBusy(false)
               }
             }}
-            className="ds-interactive shrink-0 rounded-ds-sm border border-ds-secondary/50 bg-ds-secondary/10 px-8 py-4 text-sm font-bold text-ds-secondary hover:bg-ds-secondary/20"
+            className="ds-interactive shrink-0 rounded-ds-sm border border-ds-secondary/50 bg-ds-secondary/10 px-8 py-4 text-sm font-bold text-ds-secondary hover:bg-ds-secondary/20 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {pipelineBusy ? 'Đang xử lý…' : 'Start pipeline'}
+            {pipelineBusy ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" strokeWidth={2} aria-hidden />
+                Đang xử lý…
+              </span>
+            ) : (
+              'Phân tích video'
+            )}
           </button>
         </div>
+        {pipelineBusy && (
+          <div
+            className="mt-6 space-y-3 rounded-ds-sm border border-ds-secondary/25 bg-ds-bg/50 px-4 py-4 sm:px-5"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 text-sm font-semibold leading-snug text-ds-text-primary transition-opacity duration-300">
+                {PIPELINE_STEPS_VI[pipelineStep]}
+              </p>
+              <span className="shrink-0 tabular-nums text-xs font-bold text-ds-secondary">{Math.round(pipelineProgress)}%</span>
+            </div>
+            <div
+              className="relative h-2.5 w-full overflow-hidden rounded-full bg-ds-border/50"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(pipelineProgress)}
+              aria-label="Tiến độ phân tích video"
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-ds-secondary to-ds-primary transition-[width] duration-500 ease-out"
+                style={{ width: `${pipelineProgress}%` }}
+              />
+            </div>
+            <p className="text-xs text-ds-text-secondary">
+              Quá trình có thể mất vài phút tùy độ dài video — bạn có thể để tab này mở.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="space-y-3" aria-label="Search and filter library">
@@ -285,7 +362,7 @@ export function DashboardPage() {
             <input
               value={libraryQuery}
               onChange={(e) => setLibraryQuery(e.target.value)}
-              placeholder="Search library…"
+              placeholder="Tìm trong thư viện…"
               className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/60 py-2 pl-10 pr-4 text-base text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40 md:text-sm"
               aria-label="Tìm trong thư viện bài giảng"
             />

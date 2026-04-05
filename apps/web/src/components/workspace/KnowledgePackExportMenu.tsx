@@ -1,11 +1,13 @@
 import { ChevronDown, FileDown, FileText, ImageDown } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   downloadKnowledgePackMarkdown,
   downloadKnowledgePackPdf,
   exportWorkspaceMindmapPng,
   type KnowledgePackExportContext,
 } from '../../lib/exportKnowledgePack'
+import { friendlyAxiosErrorMessage } from '../../lib/userFacingErrors'
 
 type KnowledgePackExportMenuProps = {
   ctx: KnowledgePackExportContext
@@ -26,11 +28,38 @@ export function KnowledgePackExportMenu({
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<'png' | 'md' | 'pdf' | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuPanelRef = useRef<HTMLDivElement>(null)
+  /** fixed — tránh bị cắt bởi overflow-hidden / overflow-y-auto trên toolbar & workspace */
+  const [menuFixed, setMenuFixed] = useState<{ top: number; right: number } | null>(null)
+
+  const syncMenuPosition = useCallback(() => {
+    const el = triggerRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    setMenuFixed({ top: r.bottom + 4, right: window.innerWidth - r.right })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuFixed(null)
+      return
+    }
+    syncMenuPosition()
+    const onScrollOrResize = () => syncMenuPosition()
+    window.addEventListener('scroll', onScrollOrResize, true)
+    window.addEventListener('resize', onScrollOrResize)
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true)
+      window.removeEventListener('resize', onScrollOrResize)
+    }
+  }, [open, syncMenuPosition])
 
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (wrapRef.current?.contains(e.target as Node)) return
+      const t = e.target as Node
+      if (wrapRef.current?.contains(t) || menuPanelRef.current?.contains(t)) return
       setOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
@@ -53,7 +82,7 @@ export function KnowledgePackExportMenu({
         }
         setOpen(false)
       } catch (e) {
-        onError(e instanceof Error ? e.message : 'Xuất thất bại.')
+        onError(friendlyAxiosErrorMessage(e))
       } finally {
         setBusy(null)
       }
@@ -61,9 +90,57 @@ export function KnowledgePackExportMenu({
     [ctx, mindmapFilenameBase, onError, onSuccess],
   )
 
+  const menuPanel =
+    open && menuFixed && typeof document !== 'undefined' ? (
+      <div
+        ref={menuPanelRef}
+        role="menu"
+        aria-label="Xuất Knowledge Pack"
+        style={{
+          position: 'fixed',
+          top: menuFixed.top,
+          right: menuFixed.right,
+          zIndex: 10050,
+        }}
+        className="min-w-[14.5rem] overflow-hidden rounded-ds-sm border border-ds-primary/50 bg-[rgba(10,25,47,0.96)] py-1 shadow-ds-soft backdrop-blur-md"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy != null}
+          className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-ds-text-primary hover:bg-ds-primary/15 disabled:opacity-50"
+          onClick={() => void run('png')}
+        >
+          <ImageDown className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
+          {busy === 'png' ? 'Đang xuất PNG…' : 'Mindmap — PNG (HD)'}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy != null}
+          className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-ds-text-primary hover:bg-ds-primary/15 disabled:opacity-50"
+          onClick={() => void run('md')}
+        >
+          <FileText className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
+          {busy === 'md' ? 'Đang tải…' : 'Tóm tắt + Quiz — Markdown'}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy != null}
+          className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-ds-text-primary hover:bg-ds-primary/15 disabled:opacity-50"
+          onClick={() => void run('pdf')}
+        >
+          <FileDown className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
+          {busy === 'pdf' ? 'Đang tạo PDF…' : 'Tóm tắt + Quiz — PDF'}
+        </button>
+      </div>
+    ) : null
+
   return (
     <div ref={wrapRef} className="relative inline-block text-left">
       <button
+        ref={triggerRef}
         type="button"
         disabled={busy != null}
         aria-expanded={open}
@@ -79,44 +156,7 @@ export function KnowledgePackExportMenu({
         Knowledge Pack
         <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
       </button>
-      {open ? (
-        <div
-          role="menu"
-          aria-label="Xuất Knowledge Pack"
-          className="absolute right-0 z-[50] mt-1 min-w-[14.5rem] overflow-hidden rounded-ds-sm border border-ds-primary/50 bg-[rgba(10,25,47,0.96)] py-1 shadow-ds-soft backdrop-blur-md"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            disabled={busy != null}
-            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-ds-text-primary hover:bg-ds-primary/15 disabled:opacity-50"
-            onClick={() => void run('png')}
-          >
-            <ImageDown className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
-            {busy === 'png' ? 'Đang xuất PNG…' : 'Mindmap — PNG (HD)'}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={busy != null}
-            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-ds-text-primary hover:bg-ds-primary/15 disabled:opacity-50"
-            onClick={() => void run('md')}
-          >
-            <FileText className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
-            {busy === 'md' ? 'Đang tải…' : 'Tóm tắt + Quiz — Markdown'}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={busy != null}
-            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-ds-text-primary hover:bg-ds-primary/15 disabled:opacity-50"
-            onClick={() => void run('pdf')}
-          >
-            <FileDown className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
-            {busy === 'pdf' ? 'Đang tạo PDF…' : 'Tóm tắt + Quiz — PDF'}
-          </button>
-        </div>
-      ) : null}
+      {menuPanel && createPortal(menuPanel, document.body)}
     </div>
   )
 }

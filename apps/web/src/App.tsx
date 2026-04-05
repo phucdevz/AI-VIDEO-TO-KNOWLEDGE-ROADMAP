@@ -59,6 +59,7 @@ export default function App() {
       <CommandPalette />
       <Routes>
         <Route path="/login" element={<AuthPage />} />
+        <Route path="/auth" element={<Navigate to="/login" replace />} />
         <Route element={<RequireAuth />}>
           <Route element={<Layout />}>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />

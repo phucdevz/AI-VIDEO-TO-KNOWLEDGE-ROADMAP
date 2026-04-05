@@ -50,7 +50,7 @@ apps/web/src/
 │   ├── useWorkspaceStore.ts
 │   └── useAppStore.ts
 ├── components/
-│   ├── layout/             # Layout shell: MainSidebar, AppHeader, Layout (+ Outlet)
+│   ├── layout/             # Layout shell: MainSidebar, MobileDock (mobile), AppHeader, Layout (+ Outlet)
 │   └── workspace/          # WorkspaceVideoPanel, MindmapPanel, TutorSidebar
 └── pages/
     ├── AuthPage.tsx
@@ -376,3 +376,14 @@ alter publication supabase_realtime add table public.user_preferences;
 ### 9.3 Realtime INSERT từ FastAPI
 
 Upsert qua Supabase Python (service role) vẫn tạo WAL event. Client Realtime nhận được nếu bảng trong publication và session anon có `select` phù hợp (sau RLS).
+
+### 9.4 Responsive UI (mobile-first) — **đã xác nhận 100%**
+
+- **Navigation (`< 768px`):** `MainSidebar` ẩn; điều hướng chính qua **`MobileDock`** (thanh dưới, touch target ≥ 44×44px, safe-area). Desktop giữ sidebar + collapse.  
+- **Containers:** các trang Dashboard / Settings / Analytics / Quiz / Auth dùng **`w-full max-w-7xl mx-auto`** + padding `px-4 sm:px-6 lg:px-8`.  
+- **Glass (`.ds-surface-glass`):** trên viewport ≤767px dùng blur nhẹ hơn (6px) để giảm tải GPU trên mobile.  
+- **Workspace:** cột xếp dọc trên mobile; **video `sticky`** dưới header (`top-14`); toggle **Mindmap ↔ AI Tutor**; ẩn MiniMap + Controls React Flow + toolbar mindmap trên mobile (pan/chiếm chỗ); **tắt mini-player** khi mobile (tránh chồng dock).  
+- **Auth:** ẩn khối marketing bên trái trên mobile; form ~full width.  
+- **Overflow:** `html`/`body` dùng `overflow-x: hidden` để tránh scroll ngang.  
+
+**Kiểm tra:** Chrome DevTools — iPhone 14 & iPad Mini (responsive mode), các route đã liệt kê.

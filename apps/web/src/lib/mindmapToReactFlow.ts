@@ -12,6 +12,14 @@ export type MindmapJsonNode = {
 
 export type NeuralNodeFlowData = {
   label: string
+  /** One concrete takeaway per main idea (required for new pipeline output). */
+  highlight?: string
+  /** Compact focal node under a main branch (`detail`). */
+  role?: 'main' | 'detail'
+  /** When server runs phase-1 video outline, matches a content block id. */
+  block_id?: string
+  /** Full text when `label` was shortened server-side (hover / tooltip). */
+  label_full?: string
   /** Deep time-linking anchor (seconds) when provided by backend AI. */
   timestamp?: number
   /**

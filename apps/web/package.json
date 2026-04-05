@@ -5,17 +5,20 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "seo:generate": "node scripts/generate-seo-files.mjs",
+    "dev:force": "vite --force",
+    "seo:generate": "tsx scripts/generate-seo-files.ts",
     "prebuild": "npm run seo:generate",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ether/design-tokens": "*",
+    "@dagrejs/dagre": "^3.0.0",
+    "@ether/design-tokens": "file:../../packages/design-tokens",
     "@supabase/supabase-js": "^2.49.1",
     "@xyflow/react": "^12.8.2",
     "axios": "^1.7.9",
+    "elkjs": "^0.10.0",
     "framer-motion": "^12.38.0",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.1",
@@ -33,6 +36,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/forms": "^0.5.10",
+    "@types/dagre": "^0.7.54",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -44,6 +48,7 @@
     "globals": "^17.4.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.0",
     "vite": "^5.4.11"

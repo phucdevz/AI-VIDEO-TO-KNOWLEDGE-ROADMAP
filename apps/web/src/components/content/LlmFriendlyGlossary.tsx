@@ -32,7 +32,7 @@ type LlmFriendlyGlossaryProps = {
 
 export function LlmFriendlyGlossary({ compact, embedded }: LlmFriendlyGlossaryProps) {
   const dl = (
-    <dl className={`space-y-6 ${compact ? 'space-y-4' : ''} ${embedded ? 'mt-0 max-h-[min(42vh,22rem)] overflow-y-auto pr-1' : 'mt-6'}`}>
+    <dl className={`space-y-6 ${compact ? 'space-y-4' : ''} ${embedded ? 'scrollbar-hide mt-0 max-h-[min(42vh,22rem)] overflow-y-auto pr-1' : 'mt-6'}`}>
         {GLOSSARY_ENTRIES.map(({ id, term, definition }) => (
           <div key={id}>
             <dt id={id} className="text-base font-bold text-ds-text-primary">

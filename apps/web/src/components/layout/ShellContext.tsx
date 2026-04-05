@@ -1,9 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 type ShellContextValue = {
-  mobileNavOpen: boolean
-  setMobileNavOpen: (open: boolean) => void
-  toggleMobileNav: () => void
   sidebarCollapsed: boolean
   setSidebarCollapsed: (collapsed: boolean) => void
   toggleSidebarCollapsed: () => void
@@ -12,11 +9,6 @@ type ShellContextValue = {
 const ShellContext = createContext<ShellContextValue | null>(null)
 
 export function ShellProvider({ children }: { children: ReactNode }) {
-  const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const toggleMobileNav = useCallback(() => {
-    setMobileNavOpen((o) => !o)
-  }, [])
-
   const SIDEBAR_COLLAPSED_STORAGE_KEY = 'etherai:sidebar-collapsed-v1'
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
@@ -41,14 +33,11 @@ export function ShellProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({
-      mobileNavOpen,
-      setMobileNavOpen,
-      toggleMobileNav,
       sidebarCollapsed,
       setSidebarCollapsed,
       toggleSidebarCollapsed,
     }),
-    [mobileNavOpen, toggleMobileNav, sidebarCollapsed, toggleSidebarCollapsed],
+    [sidebarCollapsed, setSidebarCollapsed, toggleSidebarCollapsed],
   )
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>

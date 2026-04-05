@@ -12,7 +12,7 @@ from app.schemas.extraction import AudioExtractionResponse, KnowledgeChunkSchema
 from app.services.ai_service import AIService, KnowledgeGenerationError
 from app.services.audio_extraction import AudioExtractionError, AudioExtractionService
 from app.services.database_service import DatabaseService
-from app.services.mindmap_timeline_guard import ensure_react_flow_timeline_coverage
+from app.services.mindmap_timeline_guard import ensure_react_flow_timeline_coverage, normalize_react_flow_labels
 from app.services.semantic_chunker import semantic_chunk_transcript
 from app.services.transcription_service import TranscriptionError, TranscriptionService
 
@@ -270,6 +270,11 @@ async def run_full_extraction_pipeline_with_progress(
         )
     except Exception:
         logger.exception("Mindmap timeline coverage guard failed; using model react_flow as-is")
+
+    try:
+        knowledge.react_flow = normalize_react_flow_labels(knowledge.react_flow)
+    except Exception:
+        logger.exception("normalize_react_flow_labels failed; using react_flow as-is")
 
     # Guardrail: ensure tutor key points cover full video, especially for long lectures.
     try:

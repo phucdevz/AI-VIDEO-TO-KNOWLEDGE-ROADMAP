@@ -1,5 +1,5 @@
 import { Helmet } from 'react-helmet-async'
-import type { TimelineSegment } from '../../data/lectures'
+import type { TimelineSegment } from '../../data/appData'
 import { secondsToSchemaDuration } from '../../lib/lectureSeo'
 import { canonicalUrl, getSiteUrl, SITE_NAME } from '../../lib/site'
 

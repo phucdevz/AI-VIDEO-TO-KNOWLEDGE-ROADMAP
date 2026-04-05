@@ -14,9 +14,64 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Mind map nodes are title-style chips, not paragraphs (matches UI + layout).
+_MINDMAP_LABEL_MAX = 52
+_LABEL_FULL_CAP = 420
+
 _MIN_DURATION_S = 600.0  # 10 min — below this, skip (short clips)
 # Middle two quartiles (25–50%, 50–75%) are where models often leave gaps.
 _MIDDLE_QUARTILES = (1, 2)
+
+
+def shorten_mindmap_label(text: str, *, max_chars: int = _MINDMAP_LABEL_MAX) -> tuple[str, str | None]:
+    """
+    Returns (short_label, original_for_tooltip_or_none).
+    If text fits in max_chars, second value is None (no extra tooltip needed).
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return "", None
+    collapsed = " ".join(raw.split())
+    capped = collapsed[:_LABEL_FULL_CAP] + ("…" if len(collapsed) > _LABEL_FULL_CAP else "")
+    if len(collapsed) <= max_chars:
+        return collapsed, None
+    chunk = collapsed[:max_chars]
+    if " " in chunk:
+        cut = chunk.rsplit(" ", 1)[0].strip()
+        if not cut:
+            cut = collapsed[: max_chars - 1]
+    else:
+        cut = collapsed[: max_chars - 1]
+    short = cut.rstrip(" \t.,;:!?") + "…"
+    return short, capped
+
+
+def normalize_react_flow_labels(react_flow: dict[str, Any]) -> dict[str, Any]:
+    """
+    Force every neural node's data.label to a short map title; optional data.label_full for hover.
+    """
+    if not isinstance(react_flow, dict):
+        return react_flow
+    out = copy.deepcopy(react_flow)
+    nodes = out.get("nodes")
+    if not isinstance(nodes, list):
+        return out
+    for n in nodes:
+        if not isinstance(n, dict) or n.get("type") != "neural":
+            continue
+        data = n.get("data")
+        if not isinstance(data, dict):
+            continue
+        lab = str(data.get("label") or "").strip()
+        if not lab:
+            continue
+        short, full = shorten_mindmap_label(lab)
+        data["label"] = short
+        if full is not None:
+            data["label_full"] = full
+        else:
+            data.pop("label_full", None)
+    return out
 
 
 def _infer_duration(duration: float | None, segments: list[dict[str, Any]]) -> float | None:
@@ -84,7 +139,8 @@ def _pick_segment_in_range(
         if not (overlaps or in_mid):
             continue
         span = en - st
-        cand = (span, tx[:140], st, en)
+        # Full segment text; pipeline later shortens to a map title via normalize_react_flow_labels
+        cand = (span, tx[:_LABEL_FULL_CAP], st, en)
         if best is None or span > best[0]:
             best = cand
     if best is None:

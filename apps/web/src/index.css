@@ -29,17 +29,41 @@
   /* Cỡ gốc 16px (body) trên mobile; Inter không bị scale nhỏ hơn */
   html {
     font-size: 16px;
-    overflow-x: clip;
+    overflow-x: hidden;
+    /* Cuộn dọc theo viewport — ổn định trên mobile (Safari/Chrome) khi main overflow-visible */
+    overflow-y: auto;
     scroll-behavior: auto;
+    -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: none;
-    overscroll-behavior-y: none;
+    overscroll-behavior-y: auto;
   }
   body {
     @apply font-body antialiased text-ds-base text-ds-text-primary;
-    overflow-x: clip;
+    overflow-x: hidden;
     overscroll-behavior-x: none;
-    overscroll-behavior-y: none;
+    overscroll-behavior-y: auto;
   }
+
+  /**
+   * Ẩn thanh cuộn OS/browser (Chrome/Edge/Safari/Firefox) — giao diện gọn hơn;
+   * cuộn chuột, bàn phím (↑↓/PgUp/PgDn), touch vẫn hoạt động.
+   */
+  html,
+  body,
+  #root,
+  main {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  #root::-webkit-scrollbar,
+  main::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
   .material-symbols-outlined {
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   }
@@ -54,6 +78,15 @@
     background: rgba(16, 30, 56, 0.6);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
+  }
+
+  /* Lighter blur on small viewports — less GPU work on mobile Safari/Chrome. */
+  @media (max-width: 767px) {
+    .ds-surface-glass {
+      background: rgba(16, 30, 56, 0.72);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
   }
 
   .ds-transition {
@@ -285,6 +318,29 @@
     }
   }
 
+  .ether-bezier-edge-led {
+    animation: led-flow 1.12s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ether-bezier-edge-led {
+      animation: none;
+      stroke-dashoffset: 0 !important;
+    }
+  }
+
+  /**
+   * Neural map — mobile: touch-action none để một ngón pan canvas & kéo node (tránh trình duyệt cuộn/nhận sai gesture).
+   * Không dùng touch-manipulation trên React Flow — nó làm mất pan kéo trên nhiều thiết bị.
+   */
+  .mindmap-react-flow-host .react-flow,
+  .mindmap-react-flow-host .react-flow__viewport,
+  .mindmap-react-flow-host .react-flow__renderer,
+  .mindmap-react-flow-host .react-flow__pane,
+  .mindmap-react-flow-host .react-flow__node {
+    touch-action: none;
+  }
+
   .mindmap-flow-controls.react-flow__controls {
     box-shadow: none;
   }
@@ -386,5 +442,16 @@
   /** Gradient dự phòng — ưu tiên dùng token ds-* / component classes thay vì utility cũ. */
   .ds-gradient-primary {
     background: linear-gradient(135deg, #6a37d4 0%, #ae8dff 100%);
+  }
+
+  /** Ẩn thanh cuộn (vẫn cuộn bằng chuột / bàn phím / touch). */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 }

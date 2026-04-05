@@ -5,6 +5,7 @@ import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { LlmFriendlyGlossary, SemanticIntroBlocks, TechnologyStackLlm } from '../components/content'
 import { PageMeta } from '../components/seo'
 import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
+import { friendlyAuthErrorMessage } from '../lib/userFacingErrors'
 import { showEtherToast } from '../lib/etherToast'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useToastStore } from '../stores/useToastStore'
@@ -46,7 +47,7 @@ export function AuthPage() {
   const handleOAuthLogin = async (provider: 'github' | 'google') => {
     const supabase = getSupabase()
     if (!supabase) {
-      pushToast('Chưa cấu hình kết nối. Vui lòng kiểm tra VITE_SUPABASE_URL / ANON KEY.', 'error')
+      pushToast('Chưa cấu hình đăng nhập. Liên hệ quản trị viên hoặc kiểm tra cài đặt ứng dụng.', 'error')
       return
     }
 
@@ -60,7 +61,7 @@ export function AuthPage() {
       },
     })
 
-    if (error) pushToast(error.message, 'error')
+    if (error) pushToast(friendlyAuthErrorMessage(error.message), 'error')
   }
 
   if (isSupabaseConfigured() && ready && session) {
@@ -89,12 +90,12 @@ export function AuthPage() {
         />
       </div>
 
-      <div className="relative z-10 mx-auto flex h-full max-w-ds flex-col md:flex-row">
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col md:flex-row lg:px-8">
         <motion.section
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.35 }}
-          className="relative w-full flex-1 overflow-hidden md:w-1/2 md:flex-none"
+          className="relative hidden w-full flex-1 overflow-hidden md:flex md:w-1/2 md:flex-none"
           aria-label="Value proposition"
         >
           <div className="absolute inset-0">
@@ -141,10 +142,10 @@ export function AuthPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.35, delay: 0.03 }}
-          className="flex w-full flex-1 items-center justify-center overflow-hidden px-6 py-8 md:w-1/2 md:flex-none md:px-12"
+          className="scrollbar-hide flex w-full min-w-0 flex-1 items-center justify-center overflow-x-hidden overflow-y-auto px-4 py-6 sm:px-6 md:w-1/2 md:flex-none md:px-12 md:py-8"
           aria-label="Account"
         >
-          <article className="ds-surface-glass w-full max-w-md rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px]">
+          <article className="ds-surface-glass w-full min-w-0 max-w-[min(100%,28rem)] rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-md sm:p-8 md:backdrop-blur-[10px]">
             <h2 className="sr-only">Account</h2>
 
             <div className="mb-6 flex gap-2 rounded-ds-sm bg-ds-bg/60 p-1">
@@ -153,7 +154,7 @@ export function AuthPage() {
                   key={m}
                   type="button"
                   onClick={() => setMode(m)}
-                  className={`ds-interactive flex-1 rounded-ds-sm py-2 text-sm font-bold capitalize ${
+                  className={`ds-interactive min-h-[44px] flex-1 rounded-ds-sm py-2 text-sm font-bold capitalize md:min-h-0 ${
                     mode === m
                       ? 'bg-ds-primary text-ds-text-primary hover:brightness-110'
                       : 'text-ds-text-secondary hover:text-ds-text-primary'
@@ -212,7 +213,7 @@ export function AuthPage() {
               onSubmit={async (e) => {
                 e.preventDefault()
                 if (!getSupabase()) {
-                  pushToast('Chưa cấu hình kết nối AI (VITE_SUPABASE_URL / ANON KEY).', 'error')
+                  pushToast('Chưa cấu hình đăng nhập. Liên hệ quản trị viên hoặc kiểm tra cài đặt ứng dụng.', 'error')
                   return
                 }
                 setBusy(true)

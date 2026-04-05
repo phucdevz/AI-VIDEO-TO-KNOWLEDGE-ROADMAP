@@ -3,7 +3,7 @@ import {
   getKnowledgePackSummarySections,
   getWorkspacePredictedExamPrompt,
   getWorkspaceQuizExportItems,
-} from '../data/workspaceKnowledgePack'
+} from '../data/appData'
 import type { MindmapHighlightBookmark } from '../stores/useWorkspaceStore'
 
 const MINDMAP_EXPORT_BG: Record<string, string> = {
@@ -56,7 +56,7 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 export async function exportWorkspaceMindmapPng(filenameBase = 'mindmap'): Promise<void> {
   const el = document.querySelector<HTMLElement>('[data-knowledge-mindmap-export]')
   if (!el?.querySelector('svg')) {
-    throw new Error('Chưa có sơ đồ mindmap để xuất.')
+    throw new Error('Chưa có sơ đồ để xuất.')
   }
   const theme = el.getAttribute('data-mindmap-theme') === 'softPastel' ? 'softPastel' : 'highContrast'
   const backgroundColor = MINDMAP_EXPORT_BG[theme] ?? MINDMAP_EXPORT_BG.highContrast

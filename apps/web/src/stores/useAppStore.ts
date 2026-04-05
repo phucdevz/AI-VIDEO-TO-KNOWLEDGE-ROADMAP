@@ -10,6 +10,8 @@ export type LibraryLectureRow = {
   video_id?: string | null
   video_url?: string | null
   title?: string | null
+  /** Optional course/topic label (search, command palette). */
+  course?: string | null
   source_url?: string | null
   status?: string | null
   transcript?: unknown

@@ -234,7 +234,7 @@ export function CommandPalette() {
             className="fixed inset-0 z-[400] bg-ds-bg/55 backdrop-blur-sm"
             onClick={close}
           />
-          <div className="fixed inset-0 z-[401] flex items-start justify-center overflow-y-auto px-4 pb-16 pt-[min(20vh,8rem)]">
+          <div className="scrollbar-hide fixed inset-0 z-[401] flex items-start justify-center overflow-y-auto px-4 pb-16 pt-[min(20vh,8rem)]">
             <motion.div
               role="dialog"
               aria-modal="true"
@@ -270,7 +270,7 @@ export function CommandPalette() {
                 </kbd>
               </div>
               <ul
-                className="max-h-[min(50vh,320px)] overflow-y-auto overscroll-y-contain p-2"
+                className="scrollbar-hide max-h-[min(50vh,320px)] overflow-y-auto overscroll-y-contain p-2"
                 role="listbox"
                 aria-label="Kết quả"
               >

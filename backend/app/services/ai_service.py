@@ -13,21 +13,44 @@ from groq import Groq
 
 from app.admin_prompt_store import load_prompt_overrides
 from app.services.accuracy_metrics import ACCURACY_REFINEMENT_THRESHOLD, compute_accuracy_components
+from app.services.knowledge_grounding import enforce_react_flow_grounding, enforce_tutor_keypoint_timestamps
+from app.services.mindmap_outline import (
+    MIN_DURATION_SECONDS,
+    build_video_outline_prompt,
+    outline_to_prompt_section,
+    parse_outline_payload,
+)
 from app.services.transcription_service import TranscriptionResult
 
 logger = logging.getLogger(__name__)
+
+# Tried in order. `llama-3.1-70b-versatile` is decommissioned; extra IDs give separate paths when 70B hits TPD 429.
+# See https://console.groq.com/docs/deprecations
+_GROQ_CHAT_MODEL_CANDIDATES: tuple[str, ...] = (
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant",
+    "qwen/qwen3-32b",
+)
 
 _REFINEMENT_PROMPT_SUFFIX = """
 
 === REFINEMENT PASS (same RISEN task, stricter alignment) ===
 Regenerate the ENTIRE JSON with keys "react_flow", "quiz", "tutor" only.
-- EXECUTE: Every react_flow.nodes[*].data.timestamp MUST fall within [segment.start-2s, segment.end+2s] for a real transcript segment.
-- **Mindmap:** Each node = one **precise** main idea at that timestamp; no node count target — remove vague/duplicate nodes; cover mid-timeline with **accurate** content, not filler.
-- Use transcript terminology verbatim where possible; keep quiz+tutor consistent with the graph.
-- Output: exactly one valid JSON object, no markdown or code fences.
+
+**Non-negotiable (grounding):**
+- Every `react_flow.nodes[*].data.timestamp` MUST fall inside a real transcript segment window **[start, end]** (allow ±2s slack only). If unsure, pick the segment that **actually** contains that idea and set the timestamp to the **middle** of that segment.
+- Every node `data.label` and **`data.highlight`** must be **directly supportable** by words spoken in that segment (same topic; no invented facts).
+- **Remove** any node whose label cannot be tied to evidence in the transcript at that time. **Merge** duplicate or near-duplicate labels.
+- **Quiz:** every `correct_index` and `explanation` must match transcript evidence; fix any mismatch.
+- **Tutor:** `summary` and each `key_points[].text` must not contradict the transcript.
+
+**Mindmap:** Each **main** node has a **`data.highlight`**; each **major branch** under the root has at least one **`data.role: "detail"`** child (short focal node). **Long videos** must not be reduced to a tiny node count — add nodes for every **grounded** major idea; merge only true duplicates. If a **VIDEO STRUCTURE** outline was given above, keep `data.block_id` and timestamps **inside** each block’s time range. Mid-timeline must not be empty of substance.
+
+Output: exactly one valid JSON object, no markdown or code fences.
 
 QUALITY:
-- Think step-by-step before emitting JSON. If a requirement conflicts with evidence, follow the transcript.
+- Think step-by-step. If a requirement conflicts with evidence, **the transcript wins**.
 """
 
 
@@ -87,23 +110,41 @@ def _risen_tutor_summary_bounds(
     )
 
 
+def _mindmap_density_band(duration_s: float) -> tuple[int, int]:
+    """Soft lower/upper hints for neural node count by duration (minutes) — not hard quotas."""
+    m = duration_s / 60.0
+    if m < 8:
+        return 4, 12
+    if m < 18:
+        return 8, 22
+    if m < 35:
+        return 12, 30
+    if m < 60:
+        return 16, 40
+    return 20, 55
+
+
 def _timeline_prompt_rules(duration_s: float | None) -> str:
-    """Timeline coverage without dictating node count — each node must still be a main idea."""
+    """Timeline coverage + density hints — each node must still be one grounded main idea."""
     if duration_s is None or (isinstance(duration_s, (int, float)) and float(duration_s) <= 0):
         return (
             "**Timeline (mindmap):** Spread `data.timestamp` across the **entire** recording. "
             "**Forbidden:** only dense nodes at the start, then a jump to “Kết luận/Conclusion” with nothing substantive in between — "
-            "the **middle** must include nodes that each state a **precise** main point from the transcript at that time."
+            "the **middle** must include nodes that each state a **precise** main point from the transcript at that time. "
+            "Long recordings with rich content need **enough** nodes to reflect major themes — not a skeleton of 4–6 vague chips."
         )
     d = float(duration_s)
     mins = d / 60.0
+    lo, hi = _mindmap_density_band(d)
     return (
         f"**Timeline coverage** (≈ {mins:.0f} min / {d:.0f}s): "
         f"(1) Split [0, {d:.0f}s] into four quarters. **Each quarter must contain at least one node** whose `data.timestamp` falls in that quarter, "
-        f"and that node's label must be a **real main idea** from that segment of the talk (not padding). "
-        f"(2) **No fixed number of nodes** — add nodes only where the lecture introduces a **distinct** important concept, result, or step. "
-        f"(3) **FORBIDDEN:** many shallow nodes early, then an empty middle and only a conclusion node — mid-timeline must have **accurate** content nodes. "
-        f"(4) Prefer fewer nodes that are **exact** over many vague ones."
+        f"and that node's label must be a **real main idea** from that segment (not padding). "
+        f"(2) Add a node for **each distinct** important concept, section shift, definition, example block, or result the speaker develops — "
+        f"**especially in long videos**: under-mapping (e.g. only ~6 nodes for a **~30-minute** dense lecture) is usually **wrong** unless the talk is genuinely repetitive. "
+        f"(3) **Typical range for this length:** about **{lo}–{hi}** neural nodes when the content is rich — this is guidance, not a quota; use more if the structure demands, fewer only if the video is sparse. "
+        f"(4) **FORBIDDEN:** shallow filler nodes; **FORBIDDEN:** a nearly empty map for a long, content-heavy recording. "
+        f"(5) Prefer **distinct, grounded** labels over vague duplicates — merge only true duplicates."
     )
 
 
@@ -121,6 +162,7 @@ def _build_risen_knowledge_prompt(
     kp_count: int,
     extra_append: str = "",
     timeline_rules_override: str | None = None,
+    outline_section: str | None = None,
 ) -> str:
     summary_bounds = _risen_tutor_summary_bounds(
         duration_s=duration_s,
@@ -133,8 +175,8 @@ def _build_risen_knowledge_prompt(
     else:
         dur_line = "unknown (infer duration from segment timestamps and transcript length)"
     scale_line = (
-        f"Transcript scale: ~{transcript_char_len} characters — longer lectures may need more distinct ideas on the map, "
-        f"but **never** sacrifice accuracy for quantity."
+        f"Transcript scale: ~{transcript_char_len} characters — **long / dense lectures should produce a mindmap with many nodes** "
+        f"(one idea each), not a minimal set. Never invent content; always ground nodes in segments."
     )
     custom_tl = (timeline_rules_override or "").strip()
     timeline_rules = custom_tl if custom_tl else _timeline_prompt_rules(duration_s)
@@ -160,6 +202,8 @@ No markdown, no explanations, no code fences, no text before or after the JSON.
 **Full-lecture text excerpts (BEGIN / MIDDLE / END — use together with segments; never summarize only the opening):**
 {multi_span_excerpt}
 
+{outline_section if outline_section else ""}
+
 === EXECUTE (Định dạng & quy tắc thực thi) ===
 
 **JSON shape (strict):**
@@ -168,13 +212,18 @@ No markdown, no explanations, no code fences, no text before or after the JSON.
 - `"tutor"`: object with `"summary"` (string) and `"key_points"` (array)
 
 **react_flow rules (precision over count):**
-- Each node: `"id"` (string), `"type": "neural"`, `"position": {{"x": number, "y": number}}`, `"data": {{"label": string, "timestamp": number}}`
-- **timestamp** (seconds, float) is mandatory — it must be the moment in the video where that **exact** idea is discussed (Deep Time-Linking).
-- **No quota on the number of nodes or edges.** Add as many nodes as the lecture **actually** needs to express its main threads; do **not** pad to hit a count. Quality rule: **every node must represent one clear main idea or piece of knowledge** (definition, theorem, step, contrast, example, result) that the speaker **really** treats at that time in the transcript. If two labels say the same thing, merge into one node.
-- **Labels (`data.label`):** Must be **specific** — technical terms, names, criteria, or a short noun phrase summarizing the **core** point spoken there. **Forbidden:** empty buzzwords ("Tổng quan", "Giới thiệu", "Kết luận", "Phần 1") **unless** the transcript at that timestamp is only introductory/concluding in a way that cannot be named more precisely; prefer the **actual subject** (e.g. "Định nghĩa X", "So sánh A và B", "Bước 3: …").
-- Build a clear hierarchy where it helps: theme → subtopics → details — only where the lecture structure supports it.
+- Each node: `"id"` (string), `"type": "neural"`, `"position": {{"x": number, "y": number}}`, `"data": {{"label": string, "timestamp": number, "highlight": string, optional `"role": "main"` or `"detail"`, optional "block_id": string}}` — use `block_id` when a **VIDEO STRUCTURE** outline was provided (must match that block’s `id`).
+- **timestamp** (seconds, float) is mandatory — choose a value **inside** one of the transcript segment intervals **[start, end]** (±2s). The label must match what is **actually said** in that segment (no hallucinated topics).
+- **Node count:** No hard quota — add **as many nodes as needed** so the map reflects **all major threads** of the talk (sections, definitions, examples, conclusions). Short videos may need few nodes; **long videos (e.g. 25–40+ min) with substantial teaching almost always need many more than six** — if you output only a tiny set, you probably skipped important ideas. Do **not** pad with fluff; **do** add a node for each **non-redundant** main point you can anchor in the transcript. If two labels say the same thing, merge into one node.
+- **Grounding:** If you cannot point to transcript words supporting a node at its timestamp, **omit** that node. **Under-mapping** a long dense lecture is as bad as hallucination — cover the real structure.
+- **Labels (`data.label`):** **≤ 52 characters each** — one **title-style** chip (short noun phrase), **not** a sentence or paragraph. Must still be **specific** — technical terms, names, criteria, or the core idea. **Forbidden:** empty buzzwords ("Tổng quan", "Giới thiệu", "Kết luận", "Phần 1") **unless** the transcript at that timestamp cannot be named more precisely; prefer the **actual subject** (e.g. "Định nghĩa X", "So sánh A và B").
+- **`data.role`:** Omit or **`"main"`** for normal topic chips (children of the root or deeper “main” ideas). Use **`"detail"`** for **small focal nodes**: one **short** on-point line (see label limit below), visually subordinate to a parent **main** node. **Every direct child of the root** (major branch) **must** have **at least one** outgoing edge to a **`role: "detail"`** child — those are the compact focal points so the map is not only broad labels + long highlights.
+- **`data.highlight`:** Required for **`main`** nodes (including the root): **1–2 short sentences**, **≤ 220 characters**, grounded at `timestamp`, not a duplicate of `label`. For **`detail`** nodes, `highlight` is **optional**; if present, **≤ 120 characters** (may restate the focal point in slightly fuller words). Root uses the same rules as `main`.
+- **Labels for `detail` nodes:** **≤ 44 characters** — a single **tight** focal phrase or short clause (the “nội dung không quá dài đúng trọng tâm”). **Labels for `main` / default:** **≤ 52 characters** as before.
+- Build a clear hierarchy: **root → main branches → at least one `detail` node per main branch** (plus deeper `main` nodes if the lecture warrants).
+- **Ether mind map (client):** Prefer **exactly one root** and a **directed tree** (`n` nodes, `n-1` edges). The root **must** connect to **3–4 distinct major-category child nodes** (not a single chain: root→A→B→C) whenever the lecture has enough structure — those become the main left/right branches in the UI. Every node **must** include `data.timestamp` (seconds) for deep time-linking.
 - {timeline_rules}
-- **Edges:** Use `"type": "neuralFlow"` with `"id"`, `"source"`, `"target"` only to show **real** relationships (prerequisite, part-of, causes, contrasts). No minimum or maximum edge count.
+- **Edges:** Use `"type": "neuralFlow"` with `"id"`, `"source"`, `"target"` only. **Direction matters:** every edge must go **from parent → child** (the root has only outgoing edges to its themes; deeper edges continue away from the root). Never point an edge **toward** the root (that breaks the mind map). Prefer a **single connected** directed tree plus optional extra cross-links — do **not** output isolated clusters of nodes with no path from the root.
 
 **quiz rules:**
 - Exactly **{question_count}** questions.
@@ -186,13 +235,12 @@ No markdown, no explanations, no code fences, no text before or after the JSON.
 - `"key_points"`: **{kp_count}** items: `{{"text": string, "timestamp_seconds": float}}`, spread across **early / mid / late**; at least one point with timestamp **≥85%** of duration when duration is known.
 
 === NEXT GOAL (Mục tiêu đầu ra) ===
-The learner gets: (1) a mindmap where **each click** seeks to a **meaningful** moment and shows **correct** knowledge, (2) a fair quiz, (3) tutor text that reflects the **whole** lecture.
+The learner gets: (1) a mindmap where **each major branch** has **small detail nodes** (short, on-point) and **main** nodes have **highlights**, with **each click** seeking to a **meaningful** moment, (2) a fair quiz, (3) tutor text that reflects the **whole** lecture.
 
 === QUALITY (Tư duy bổ trợ — áp dụng khi sinh JSON) ===
-- Plan first: list the lecture's **major ideas** along the timeline, then create one node per **non-redundant** main point — not one node per sentence.
-- **Accuracy > quantity:** remove or merge any node that is vague, duplicate, or not clearly grounded in the transcript at its timestamp.
+- Plan first: skim the **whole** transcript and list **major ideas and section turns** along the timeline, then create one node per **non-redundant** main point — not one node per sentence, but also **not** skipping whole blocks of content in long videos.
+- **Precision > vague duplication:** remove or merge nodes that are fuzzy duplicates or not grounded at their timestamp — but do **not** confuse this with “use few nodes”; long lectures need **breadth** when the material supports it.
 - Do not invent facts; wording must be traceable to what was said.
-- If the middle of the timeline is thin, add **only** nodes that capture **real** mid-lecture content, not placeholders.
 - Return **only** the JSON object.
 """
     extra = (extra_append or "").strip()
@@ -209,7 +257,7 @@ def _build_risen_tutor_qa_prompt(
     max_citations: int,
 ) -> str:
     return f"""=== ROLE (Vai trò) ===
-You are an **expert AI tutor** for video-based courses. You answer using **only** the supplied transcript segments (RAG). You cite evidence faithfully.
+You are an **expert AI tutor** for video-based courses. You infer answers **only** from the timed excerpts below (same content as what appears in the video). Internally they are segment lines; when speaking to the learner, treat them as **what was said in the video**.
 
 === INSTRUCTION (Nhiệm vụ) ===
 Return **exactly ONE** JSON object, nothing else — no markdown, no code fences.
@@ -223,24 +271,25 @@ Schema:
 === CONTEXT (Bối cảnh) ===
 Video title (may be empty): {video_title or "unknown"}
 
-**Transcript segments (numbered; use only these for facts and citations):**
+**Timed excerpts from the lecture video (numbered; sole source for facts and citations):**
 {chr(10).join(seg_lines)}
 
 **Learner question:**
 {question}
 
 === EXECUTE (Thực thi) ===
-- "answer": clear, helpful, **strictly grounded** in the segments; language should match the learner's question style when reasonable.
-- "citations": at most **{max_citations}** items; each citation text must match a provided segment (or its substring). If evidence is insufficient, state that briefly and use an empty citations array.
+- "answer": clear, helpful, **strictly grounded** in the excerpts above; language should match the learner's question style when reasonable.
+- **Learner-facing wording (important):** In the `answer` text, refer to evidence as **the video / the lecture** — e.g. Vietnamese: "trong video", "trong bài", "các đoạn video", "theo nội dung bài" — **do not** say "trong transcript", "bản ghi lời", "các đoạn transcript" unless the user explicitly asks about subtitles or transcription. English: say "in the video", "in this lecture", "as explained in the video" — **not** "in the transcript".
+- "citations": at most **{max_citations}** items; each citation text must match a provided excerpt (or its substring). If evidence is insufficient, state that briefly and use an empty citations array.
 
 === NEXT GOAL (Mục tiêu) ===
-The learner gets a correct, traceable explanation tied to the lecture — no hallucinated content.
+The learner gets a correct, traceable explanation tied to the **video** — no hallucinated content.
 
 === QUALITY ===
-- Think step-by-step: which segments answer the question? Then compose the answer.
-- If critical information is missing from the segments, say so explicitly instead of guessing; do not fabricate.
+- Think step-by-step: which excerpts answer the question? Then compose the answer.
+- If critical information is missing from the excerpts, say so explicitly instead of guessing; do not fabricate.
 - If the question cannot be answered well without more context, state what is missing and keep citations empty or partial.
-- After drafting, briefly verify citations against segment text (play devil's advocate: would a skeptic accept each claim?).
+- After drafting, briefly verify citations against excerpt text (play devil's advocate: would a skeptic accept each claim?).
 """
 
 # Keep a preferred model first, then fallback candidates for API/version drift.
@@ -291,6 +340,64 @@ def _gemini_response_confidence(response: object) -> float | None:
 
 class KnowledgeGenerationError(Exception):
     """Gemini returned invalid JSON or violated pipeline constraints."""
+
+
+def _validate_main_branches_have_detail_children(nodes: list[Any], edges: list[Any]) -> None:
+    """Each direct child of the graph root must have ≥1 child with data.role == 'detail'."""
+    from collections import defaultdict
+
+    node_by_id: dict[str, dict[str, Any]] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nid = n.get("id")
+        if isinstance(nid, str) and nid.strip():
+            node_by_id[nid.strip()] = n
+
+    all_ids = set(node_by_id.keys())
+    if not all_ids:
+        return
+
+    in_deg: dict[str, int] = {i: 0 for i in all_ids}
+    out_adj: dict[str, list[str]] = defaultdict(list)
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        s, t = e.get("source"), e.get("target")
+        if not isinstance(s, str) or not isinstance(t, str):
+            continue
+        if s not in all_ids or t not in all_ids:
+            continue
+        out_adj[s].append(t)
+        in_deg[t] = in_deg.get(t, 0) + 1
+
+    roots = [nid for nid in all_ids if in_deg.get(nid, 0) == 0]
+    if len(roots) != 1:
+        return
+    root_id = roots[0]
+    mains = out_adj.get(root_id, [])
+    if not mains:
+        return
+
+    for mid in mains:
+        kids = out_adj.get(mid, [])
+        if not kids:
+            raise KnowledgeGenerationError(
+                f'Mindmap: main branch "{mid}" must have at least one child node (focal detail under each major branch).',
+            )
+        has_detail = False
+        for kid in kids:
+            kn = node_by_id.get(kid)
+            if not isinstance(kn, dict):
+                continue
+            d = kn.get("data")
+            if isinstance(d, dict) and d.get("role") == "detail":
+                has_detail = True
+                break
+        if not has_detail:
+            raise KnowledgeGenerationError(
+                f'Mindmap: main branch "{mid}" must include at least one child with data.role "detail" (short focal node).',
+            )
 
 
 @dataclass
@@ -397,6 +504,61 @@ class AIService:
             },
         )
 
+    def _generate_video_outline(
+        self,
+        tr: TranscriptionResult,
+        *,
+        video_title: str | None,
+        target_lang: str,
+        duration_s: float,
+        segment_lines: list[str],
+    ) -> list[dict[str, Any]] | None:
+        """
+        Phase 1: split timeline into main content blocks (second LLM call, long videos only).
+        """
+        if duration_s < MIN_DURATION_SECONDS:
+            return None
+        prompt = build_video_outline_prompt(
+            video_title=video_title,
+            duration_s=duration_s,
+            target_lang_code=target_lang,
+            segment_lines=segment_lines,
+        )
+        order: list[str]
+        if self._provider == "groq":
+            order = ["groq", "google"]
+        elif self._provider == "google":
+            order = ["google", "groq"]
+        else:
+            order = ["google", "groq"]
+
+        last_err: Exception | None = None
+        for prov in order:
+            if prov == "google" and self._model is None:
+                continue
+            if prov == "groq" and self._groq_client is None:
+                continue
+            try:
+                raw = self._generate_json_text(prompt, provider=prov)
+                payload = json.loads(raw)
+                if not isinstance(payload, dict):
+                    cleaned = _extract_json_object(raw)
+                    if cleaned is None:
+                        raise KnowledgeGenerationError("outline: invalid JSON")
+                    payload = json.loads(cleaned)
+                blocks = parse_outline_payload(payload, duration_s=duration_s)
+                if blocks:
+                    logger.info("Video outline: %s blocks (provider=%s)", len(blocks), prov)
+                    return blocks
+            except Exception as e:
+                last_err = e
+                logger.warning("Video outline via %s failed: %s", prov, e)
+                continue
+
+        if last_err:
+            logger.warning("Video outline skipped after errors: %s", last_err)
+        return None
+
     def generate_from_transcript(
         self,
         tr: TranscriptionResult,
@@ -444,6 +606,22 @@ class AIService:
         multi_excerpt = self._multi_span_transcript_excerpt(tr)
         ov = load_prompt_overrides()
         tlr = (ov.get("timeline_rules_override") or "").strip()
+
+        outline_section: str | None = None
+        if duration_s is not None and float(duration_s) >= MIN_DURATION_SECONDS:
+            try:
+                blocks = self._generate_video_outline(
+                    tr,
+                    video_title=video_title,
+                    target_lang=tl,
+                    duration_s=float(duration_s),
+                    segment_lines=segment_lines,
+                )
+                if blocks:
+                    outline_section = outline_to_prompt_section(blocks, duration_s=float(duration_s))
+            except Exception:
+                logger.exception("Video outline phase failed; continuing without outline")
+
         prompt = _build_risen_knowledge_prompt(
             target_name=target_name,
             target_lang_code=tl,
@@ -457,6 +635,7 @@ class AIService:
             kp_count=kp_count,
             extra_append=ov.get("risen_knowledge_append") or "",
             timeline_rules_override=tlr if tlr else None,
+            outline_section=outline_section,
         )
 
         base = self._execute_knowledge_prompt(prompt)
@@ -469,6 +648,7 @@ class AIService:
         )
         base.accuracy_metrics = metrics
 
+        out = base
         score = metrics.get("accuracy_score", 0.0)
         if score < ACCURACY_REFINEMENT_THRESHOLD:
             logger.info(
@@ -492,15 +672,35 @@ class AIService:
                 refined.refined = True
                 if m2.get("accuracy_score", 0.0) >= score:
                     refined.provider_used = refined.provider_used or base.provider_used
-                    return refined
-                base.refined = True
-                base.accuracy_metrics = metrics
-                return base
+                    out = refined
+                else:
+                    base.refined = True
             except Exception:
                 logger.exception("Refinement pass failed; keeping initial generation")
                 base.refined = True
 
-        return base
+        self._finalize_with_grounding(out, transcript_text=tr.text or "", segments=segs)
+        return out
+
+    def _finalize_with_grounding(
+        self,
+        result: KnowledgeGenerationResult,
+        *,
+        transcript_text: str,
+        segments: list[dict[str, Any]],
+    ) -> None:
+        """Snap mindmap/tutor timestamps to ASR segments and recompute accuracy metrics."""
+        try:
+            result.react_flow = enforce_react_flow_grounding(result.react_flow, segments)
+            result.tutor = enforce_tutor_keypoint_timestamps(result.tutor, segments)
+            result.accuracy_metrics = compute_accuracy_components(
+                transcript_text=transcript_text,
+                tutor=result.tutor,
+                react_flow=result.react_flow,
+                segments=segments,
+            )
+        except Exception:
+            logger.exception("Segment grounding failed; keeping model output")
 
     def _execute_knowledge_prompt(self, prompt: str) -> KnowledgeGenerationResult:
         """Try providers in order until JSON validates; attaches provider_used and confidence."""
@@ -722,9 +922,8 @@ class AIService:
     def _generate_with_groq(self, prompt: str) -> str:
         assert self._groq_client is not None
         try:
-            groq_models = ("llama-3.3-70b-versatile", "llama-3.1-70b-versatile")
             last_error: Exception | None = None
-            for model_name in groq_models:
+            for model_name in _GROQ_CHAT_MODEL_CANDIDATES:
                 try:
                     sys_msg = (
                         "Follow the user's RISEN prompt: single JSON only, keys react_flow, quiz, tutor. "
@@ -739,7 +938,7 @@ class AIService:
                     try:
                         completion = self._groq_client.chat.completions.create(
                             model=model_name,
-                            temperature=0.2,
+                            temperature=0.15,
                             logprobs=True,
                             top_logprobs=1,
                             messages=messages,
@@ -747,7 +946,7 @@ class AIService:
                     except Exception:
                         completion = self._groq_client.chat.completions.create(
                             model=model_name,
-                            temperature=0.2,
+                            temperature=0.15,
                             messages=messages,
                         )
                     self._last_token_confidence = _groq_completion_confidence(completion)
@@ -808,6 +1007,41 @@ class AIService:
             label = data.get("label")
             if not isinstance(label, str) or not label.strip():
                 raise KnowledgeGenerationError(f"react_flow.nodes[{i}].data.label must be a non-empty string")
+            role = data.get("role")
+            if role is not None and role not in ("main", "detail"):
+                raise KnowledgeGenerationError(
+                    f'react_flow.nodes[{i}].data.role must be "main", "detail", or omitted',
+                )
+            is_detail = role == "detail"
+            label_st = label.strip()
+            if is_detail and len(label_st) > 44:
+                raise KnowledgeGenerationError(
+                    f"react_flow.nodes[{i}].data.label for detail nodes must be at most 44 characters",
+                )
+            if not is_detail and len(label_st) > 52:
+                raise KnowledgeGenerationError(
+                    f"react_flow.nodes[{i}].data.label must be at most 52 characters for main/root nodes",
+                )
+            highlight = data.get("highlight")
+            if is_detail:
+                if highlight is not None and highlight != "":
+                    if not isinstance(highlight, str):
+                        raise KnowledgeGenerationError(
+                            f"react_flow.nodes[{i}].data.highlight must be a string when provided",
+                        )
+                    if len(highlight.strip()) > 120:
+                        raise KnowledgeGenerationError(
+                            f"react_flow.nodes[{i}].data.highlight for detail nodes must be at most 120 characters",
+                        )
+            else:
+                if not isinstance(highlight, str) or not highlight.strip():
+                    raise KnowledgeGenerationError(
+                        f'react_flow.nodes[{i}].data.highlight must be a non-empty string for main/root nodes',
+                    )
+                if len(highlight.strip()) > 220:
+                    raise KnowledgeGenerationError(
+                        f"react_flow.nodes[{i}].data.highlight must be at most 220 characters for main/root nodes",
+                    )
             if "timestamp" not in data:
                 raise KnowledgeGenerationError(
                     f'react_flow.nodes[{i}] missing required data.timestamp for Deep Time-Linking',
@@ -818,6 +1052,12 @@ class AIService:
                 raise KnowledgeGenerationError(f'react_flow.nodes[{i}].data.timestamp must be a number')
             if not math.isfinite(ts):
                 raise KnowledgeGenerationError(f'react_flow.nodes[{i}].data.timestamp must be finite')
+            if "block_id" in data:
+                bid = data.get("block_id")
+                if bid is not None and (not isinstance(bid, str) or not bid.strip()):
+                    raise KnowledgeGenerationError(
+                        f'react_flow.nodes[{i}].data.block_id must be a non-empty string when provided',
+                    )
 
         for i, e in enumerate(edges):
             if not isinstance(e, dict):
@@ -833,6 +1073,8 @@ class AIService:
                 raise KnowledgeGenerationError(f"react_flow.edges[{i}].target must be a non-empty string")
             if e.get("type") != "neuralFlow":
                 raise KnowledgeGenerationError(f'react_flow.edges[{i}].type must be "neuralFlow"')
+
+        _validate_main_branches_have_detail_children(nodes, edges)
 
         quiz = payload.get("quiz")
         if not isinstance(quiz, dict):

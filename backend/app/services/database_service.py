@@ -9,6 +9,20 @@ from supabase import Client, create_client
 logger = logging.getLogger(__name__)
 
 
+def _is_system_logs_table_missing(exc: BaseException) -> bool:
+    """PostgREST PGRST205 = table not in schema cache (never created or not reloaded)."""
+    code = getattr(exc, "code", None)
+    if code == "PGRST205":
+        return True
+    a0 = exc.args[0] if getattr(exc, "args", None) else None
+    if isinstance(a0, dict) and a0.get("code") == "PGRST205":
+        return True
+    msg = str(exc).lower()
+    return "pgrst205" in msg or (
+        "system_logs" in msg and ("schema cache" in msg or "could not find the table" in msg)
+    )
+
+
 @dataclass
 class LecturePersistResult:
     ok: bool
@@ -340,8 +354,13 @@ class DatabaseService:
             return
         try:
             self._client.table("system_logs").insert(row).execute()
-        except Exception:
-            logger.exception("system_logs insert skipped or failed")
+        except Exception as e:
+            if _is_system_logs_table_missing(e):
+                logger.debug(
+                    "system_logs insert skipped: table missing — run supabase/sql/system_logs.sql in Supabase SQL Editor",
+                )
+                return
+            logger.warning("system_logs insert failed: %s", e)
 
     def list_recent_system_logs(self, limit: int = 40) -> list[dict[str, Any]]:
         if not self._client:
@@ -356,6 +375,11 @@ class DatabaseService:
             )
             data = getattr(res, "data", None)
             return data if isinstance(data, list) else []
-        except Exception:
-            logger.exception("system_logs list failed")
+        except Exception as e:
+            if _is_system_logs_table_missing(e):
+                logger.debug(
+                    "system_logs list skipped: table missing — run supabase/sql/system_logs.sql then Settings → API → Reload schema",
+                )
+                return []
+            logger.warning("system_logs list failed: %s", e)
             return []

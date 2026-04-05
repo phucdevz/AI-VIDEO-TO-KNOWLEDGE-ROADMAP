@@ -1,4 +1,6 @@
--- Optional: pipeline / admin evaluation metrics (service role inserts from FastAPI)
+-- Optional: pipeline / admin evaluation metrics (FastAPI service role inserts).
+-- If you see PGRST205 / "Could not find the table system_logs": run this file in
+-- Supabase → SQL Editor → Run, then Settings → API → Reload schema.
 create table if not exists public.system_logs (
   id uuid primary key default gen_random_uuid (),
   created_at timestamptz not null default now (),

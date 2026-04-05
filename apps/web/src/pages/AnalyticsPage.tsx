@@ -203,7 +203,7 @@ export function AnalyticsPage() {
   const statLabel = (v: number | null) => (v === null ? '—' : String(v))
 
   return (
-    <div className="mx-auto max-w-ds min-w-0 space-y-8 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-8 px-4 py-6 sm:px-6 lg:px-8 md:py-8">
       <PageMeta
         path="/analytics"
         title="Analytics"

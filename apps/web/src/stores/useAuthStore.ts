@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Session, User } from '@supabase/supabase-js'
+import { friendlyAuthErrorMessage } from '../lib/userFacingErrors'
 import { getSupabase, getSupabaseAnonKeyType } from '../lib/supabase'
 
 type AuthState = {
@@ -42,30 +43,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signInWithEmail: async (email, password) => {
     const supabase = getSupabase()
-    if (!supabase) return { error: 'Supabase is not configured (missing VITE_SUPABASE_URL / ANON KEY).' }
+    if (!supabase) {
+      return { error: friendlyAuthErrorMessage('Supabase is not configured (missing VITE_SUPABASE_URL / ANON KEY).') }
+    }
     const t = getSupabaseAnonKeyType()
     if (t === 'publishable') {
       return {
-        error:
-          'VITE_SUPABASE_ANON_KEY đang là sb_publishable_… (publishable key). ' +
-          'Đăng nhập email/password cần legacy anon JWT bắt đầu bằng “eyJ…”. ' +
-          'Vui lòng dùng đúng “anon/public” key trong Supabase Dashboard → Settings → API.',
+        error: friendlyAuthErrorMessage(
+          'VITE_SUPABASE_ANON_KEY đang là sb_publishable_… (publishable key). Đăng nhập cần khóa anon dạng eyJ…',
+        ),
       }
     }
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
-    return { error: error?.message ?? null }
+    return { error: error?.message ? friendlyAuthErrorMessage(error.message) : null }
   },
 
   signUpWithEmail: async (email, password, displayName) => {
     const supabase = getSupabase()
-    if (!supabase) return { error: 'Supabase is not configured (missing VITE_SUPABASE_URL / ANON KEY).' }
+    if (!supabase) {
+      return { error: friendlyAuthErrorMessage('Supabase is not configured (missing VITE_SUPABASE_URL / ANON KEY).') }
+    }
     const t = getSupabaseAnonKeyType()
     if (t === 'publishable') {
       return {
-        error:
-          'VITE_SUPABASE_ANON_KEY đang là sb_publishable_… (publishable key). ' +
-          'Đăng ký email/password cần legacy anon JWT bắt đầu bằng “eyJ…”. ' +
-          'Vui lòng dùng đúng “anon/public” key trong Supabase Dashboard → Settings → API.',
+        error: friendlyAuthErrorMessage(
+          'VITE_SUPABASE_ANON_KEY đang là sb_publishable_… (publishable key). Đăng ký cần khóa anon dạng eyJ…',
+        ),
       }
     }
     const { error } = await supabase.auth.signUp({
@@ -75,7 +78,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         ? { data: { full_name: displayName.trim(), display_name: displayName.trim() } }
         : undefined,
     })
-    return { error: error?.message ?? null }
+    return { error: error?.message ? friendlyAuthErrorMessage(error.message) : null }
   },
 
   signOut: async () => {

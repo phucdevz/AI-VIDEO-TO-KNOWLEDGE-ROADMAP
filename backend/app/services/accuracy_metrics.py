@@ -206,4 +206,5 @@ def compute_accuracy_components(
     }
 
 
-ACCURACY_REFINEMENT_THRESHOLD = 0.60
+# Below this composite score, run one refinement pass (stricter prompt). Lower = more often.
+ACCURACY_REFINEMENT_THRESHOLD = 0.55

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import io
 import re
 from typing import Annotated, Any
@@ -23,6 +24,11 @@ def _fmt_time(seconds: float) -> str:
     m = int(s // 60)
     r = int(s % 60)
     return f"{m:02d}:{r:02d}"
+
+
+def _xml_escape(s: str) -> str:
+    """ReportLab Paragraph dùng mini-HTML; ký tự <>& trong nội dung quiz làm lỗi parse → 500."""
+    return html.escape(str(s), quote=False)
 
 
 def _safe_filename(name: str) -> str:
@@ -76,12 +82,37 @@ async def export_quiz_pdf(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"reportlab missing: {e}") from e
 
-    # Register Times New Roman from Windows if available; fallback to Helvetica.
+    # Unicode: ưu tiên Times New Roman (Windows); Linux/macOS thường có DejaVu trong reportlab.
     font_name = "Helvetica"
     try:
-        pdfmetrics.registerFont(TTFont("TimesNewRoman", r"C:\Windows\Fonts\times.ttf"))
-        pdfmetrics.registerFont(TTFont("TimesNewRoman-Bold", r"C:\Windows\Fonts\timesbd.ttf"))
-        font_name = "TimesNewRoman"
+        import os
+        import sys
+
+        if sys.platform == "win32":
+            windir = os.environ.get("WINDIR", r"C:\Windows")
+            t_regular = os.path.join(windir, "Fonts", "times.ttf")
+            t_bold = os.path.join(windir, "Fonts", "timesbd.ttf")
+            if os.path.isfile(t_regular) and os.path.isfile(t_bold):
+                pdfmetrics.registerFont(TTFont("TimesNewRoman", t_regular))
+                pdfmetrics.registerFont(TTFont("TimesNewRoman-Bold", t_bold))
+                font_name = "TimesNewRoman"
+        else:
+            try:
+                from pathlib import Path
+
+                for sub in (
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                ):
+                    if Path(sub).is_file():
+                        pdfmetrics.registerFont(TTFont("DejaVuSans", sub))
+                        b = sub.replace("DejaVuSans.ttf", "DejaVuSans-Bold.ttf")
+                        if Path(b).is_file():
+                            pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", b))
+                        font_name = "DejaVuSans"
+                        break
+            except Exception:
+                pass
     except Exception:
         font_name = "Helvetica"
 
@@ -97,15 +128,27 @@ async def export_quiz_pdf(
     )
 
     styles = getSampleStyleSheet()
-    h = ParagraphStyle("h", parent=styles["Heading2"], fontName=f"{font_name}-Bold" if font_name != "Helvetica" else "Helvetica-Bold", fontSize=14, leading=18)
+    bold_suffix = (
+        "Helvetica-Bold"
+        if font_name == "Helvetica"
+        else f"{font_name}-Bold"
+    )
+    h = ParagraphStyle(
+        "h",
+        parent=styles["Heading2"],
+        fontName=bold_suffix,
+        fontSize=14,
+        leading=18,
+    )
     p = ParagraphStyle("p", parent=styles["BodyText"], fontName=font_name, fontSize=11, leading=15)
     small = ParagraphStyle("small", parent=styles["BodyText"], fontName=font_name, fontSize=10, leading=13, textColor="#586174")
 
     story: list[Any] = []
-    story.append(Paragraph(title, h))
+    story.append(Paragraph(_xml_escape(title), h))
     story.append(Spacer(1, 10))
 
-    for idx, q in enumerate(questions):
+    used = 0
+    for q in questions:
         if not isinstance(q, dict):
             continue
         question = str(q.get("question") or "").strip()
@@ -118,17 +161,18 @@ async def export_quiz_pdf(
         except Exception:
             ci = -1
 
-        story.append(Paragraph(f"<b>{idx+1}. {question}</b>", p))
+        used += 1
+        story.append(Paragraph(f"<b>{used}. {_xml_escape(question)}</b>", p))
         story.append(Spacer(1, 4))
         for i, c in enumerate(choices):
             label = chr(65 + i)
             text = str(c or "").strip()
             mark = "✓ " if i == ci else ""
-            story.append(Paragraph(f"{mark}{label}. {text}", p))
+            story.append(Paragraph(f"{mark}{label}. {_xml_escape(text)}", p))
         exp = str(q.get("explanation") or "").strip()
         if exp:
             story.append(Spacer(1, 4))
-            story.append(Paragraph(f"<b>Giải thích:</b> {exp}", small))
+            story.append(Paragraph(f"<b>Giải thích:</b> {_xml_escape(exp)}", small))
 
         ev = q.get("evidence")
         if isinstance(ev, list) and len(ev) > 0:
@@ -140,9 +184,17 @@ async def export_quiz_pdf(
                 txt = str(e.get("text") or "").strip()
                 if not txt:
                     continue
-                story.append(Paragraph(f"<b>Nguồn:</b> [{_fmt_time(st)}–{_fmt_time(en)}] {txt}", small))
+                story.append(
+                    Paragraph(
+                        f"<b>Nguồn:</b> [{_xml_escape(_fmt_time(st))}–{_xml_escape(_fmt_time(en))}] {_xml_escape(txt)}",
+                        small,
+                    )
+                )
 
         story.append(Spacer(1, 12))
+
+    if used == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No valid quiz questions to export")
 
     doc.build(story)
     buf.seek(0)

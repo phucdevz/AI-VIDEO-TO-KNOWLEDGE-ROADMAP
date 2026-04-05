@@ -20,6 +20,7 @@ import gradio as gr
 
 from app.admin_env import env_file_path, read_env_values, reload_app_settings, write_env_updates
 from app.admin_prompt_store import default_prompt_overrides, load_prompt_overrides, save_prompt_overrides
+from app.admin_storage import clear_all_temp, clear_temp_audio, storage_stats_markdown
 from app.config import get_settings
 from app.services.database_service import DatabaseService
 from app.services.pipeline import PipelineClientError, PipelineError, run_full_extraction_pipeline_with_progress
@@ -58,6 +59,28 @@ html, body {
     #070d18 !important;
 }
 .gradio-container > div { height: 100% !important; min-height: 0 !important; }
+
+/* Ẩn thanh cuộn (Chrome / Safari / Firefox / Edge) — vẫn cuộn bình thường */
+.gradio-container * {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+.gradio-container *::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+  background: transparent !important;
+}
+/* Bỏ mũi tên lên/xuống trên ô số (theme Gradio / dropdown width) */
+.gradio-container input[type="number"]::-webkit-inner-spin-button,
+.gradio-container input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none !important;
+  margin: 0 !important;
+}
+.gradio-container input[type="number"] {
+  -moz-appearance: textfield !important;
+  appearance: textfield !important;
+}
 
 .admin-viewport {
   height: 100vh;
@@ -770,6 +793,19 @@ def _reset_prompt_fields() -> tuple[str, str, str, str, str]:
     return a, b, c, d, "Đã khôi phục mặc định (các ô trống)."
 
 
+def _clear_temp_audio_bundle() -> tuple[str, str]:
+    return clear_temp_audio(), storage_stats_markdown()
+
+
+def _clear_all_temp_bundle(confirmed: bool) -> tuple[str, str]:
+    if not confirmed:
+        return (
+            "⚠️ Chọn checkbox **Xác nhận xóa toàn bộ `temp/`** rồi bấm lại nút.",
+            storage_stats_markdown(),
+        )
+    return clear_all_temp(), storage_stats_markdown()
+
+
 def _refresh_analytics_bundle() -> tuple[str, str]:
     return _analytics_trend_html(), _analytics_table_md()
 
@@ -897,7 +933,34 @@ def build_admin_blocks() -> gr.Blocks:
                         )
                         health_md = gr.Markdown()
 
-                    # —— Tab 4: Prompts ——
+                    # —— Tab 4: Storage ——
+                    with gr.Tab("Storage"):
+                        gr.Markdown("Dọn dữ liệu tạm trên server", elem_classes=["admin-tab-title"])
+                        gr.Markdown(
+                            "Thư mục **`backend/storage/temp/`**: audio pipeline, export CSV/PDF từ tab Analytics. "
+                            "File **`admin_prompt_overrides.json`** (tab AI Prompts) **không** bị xóa bởi các nút bên dưới.",
+                            elem_classes=["admin-muted"],
+                        )
+                        storage_stats = gr.Markdown(storage_stats_markdown())
+                        with gr.Row(elem_classes=["admin-btn-row"]):
+                            refresh_st = gr.Button("Làm mới số liệu", variant="secondary")
+                            clear_audio_btn = gr.Button("Xóa temp/audio", variant="secondary")
+                        confirm_clear_temp = gr.Checkbox(
+                            label="Xác nhận xóa toàn bộ nội dung temp/ (CSV, PDF, audio, …)",
+                            value=False,
+                        )
+                        with gr.Row(elem_classes=["admin-btn-row"]):
+                            clear_all_btn = gr.Button("Xóa hàng loạt — toàn bộ temp/", variant="primary")
+                        storage_msg = gr.Markdown()
+                        refresh_st.click(storage_stats_markdown, outputs=storage_stats)
+                        clear_audio_btn.click(_clear_temp_audio_bundle, outputs=[storage_msg, storage_stats])
+                        clear_all_btn.click(
+                            _clear_all_temp_bundle,
+                            [confirm_clear_temp],
+                            [storage_msg, storage_stats],
+                        )
+
+                    # —— Tab 5: Prompts ——
                     with gr.Tab("AI Prompts"):
                         gr.Markdown("Tùy chỉnh prompt (append / override)", elem_classes=["admin-tab-title"])
                         gr.Markdown(
@@ -954,6 +1017,7 @@ def build_admin_blocks() -> gr.Blocks:
             _load_prompt_fields,
             outputs=[prompt_risen, prompt_refine, prompt_timeline, prompt_tutor_qa],
         )
+        demo.load(storage_stats_markdown, outputs=storage_stats)
 
     return demo
 

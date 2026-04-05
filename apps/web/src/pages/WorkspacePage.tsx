@@ -1,11 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Focus, Maximize2, Minimize2, Sparkles } from 'lucide-react'
+import { Focus, Map, Maximize2, MessageSquare, Minimize2, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   KnowledgePackExportMenu,
-  LearningProgressHud,
   MindmapErrorBoundary,
   MindmapPanel,
   ProcessingOverlay,
@@ -15,11 +14,12 @@ import {
   WorkspaceVideoPanel,
 } from '../components/workspace'
 import { PageMeta, WorkspaceJsonLd } from '../components/seo'
-import { DEFAULT_TIMELINE_SEGMENTS, getLectureById } from '../data/lectures'
+import { DEFAULT_TIMELINE_SEGMENTS, getLectureById } from '../data/appData'
 import { postAudioExtraction } from '../lib/api'
 import { mapLectureRowToPipeline } from '../lib/mapLectureRowToPipeline'
 import { fetchLecturesRows, getSupabase } from '../lib/supabase'
 import { etherWorkspaceToasts } from '../lib/etherToast'
+import { useIsMobileViewport } from '../hooks/useMatchMedia'
 import { lectureOgDescription, lectureOgTitle } from '../lib/lectureSeo'
 import { SITE_NAME } from '../lib/site'
 import { useAppStore } from '../stores/useAppStore'
@@ -151,6 +151,8 @@ export function WorkspacePage() {
   const playedSecondsRef = useRef(0)
   const [knowledgeProcessing, setKnowledgeProcessing] = useState(false)
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel | null>(null)
+  const [mobileStackTab, setMobileStackTab] = useState<'mindmap' | 'tutor'>('mindmap')
+  const isMobile = useIsMobileViewport()
   const pushToast = useToastStore((s) => s.pushToast)
   const mindmapHighlights = useWorkspaceStore((s) => s.mindmapHighlights)
   const setPipelineResult = useWorkspaceStore((s) => s.setPipelineResult)
@@ -301,10 +303,14 @@ export function WorkspacePage() {
     }
   }, [fullscreenPanel])
 
+  const hideMindmapOnMobile = Boolean(isMobile && !focusMode && mobileStackTab === 'tutor')
+  const hideTutorOnMobile = Boolean(isMobile && !focusMode && mobileStackTab === 'mindmap')
+
   const miniPortal =
     hydrationReady &&
     hasPipelinePayload &&
     fullscreenPanel !== 'video' &&
+    !isMobile &&
     typeof document !== 'undefined' &&
     createPortal(
       <AnimatePresence>
@@ -350,7 +356,6 @@ export function WorkspacePage() {
         />
       ) : null}
       {miniPortal}
-      {hydrationReady && hasPipelinePayload && fullscreenPanel == null && <LearningProgressHud />}
 
       {typeof document !== 'undefined' &&
         createPortal(
@@ -391,7 +396,7 @@ export function WorkspacePage() {
           </Link>
         </div>
       ) : (
-      <div className="flex min-h-[calc(100vh-4rem)] min-w-0 flex-col gap-3 overflow-x-clip overflow-y-auto overscroll-y-contain px-4 pb-4 pt-4 max-md:pb-2 lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-hidden lg:px-6 lg:pb-4">
+      <div className="scrollbar-hide mx-auto flex w-full max-w-7xl min-w-0 flex-col gap-3 overflow-x-clip px-4 pb-4 pt-4 max-md:min-h-0 max-md:overflow-visible max-md:pb-2 lg:min-h-[calc(100vh-4rem)] lg:h-[calc(100vh-4rem)] lg:gap-4 lg:overflow-y-auto lg:overscroll-y-contain lg:px-8 lg:pb-4">
         <AnimatePresence initial={false}>
           {fullscreenPanel == null && (
             <motion.div
@@ -440,7 +445,7 @@ export function WorkspacePage() {
                 onSuccess={(msg) => pushToast(msg, 'default')}
               />
               {stickyMini && (
-                <span className="text-[11px] font-normal text-ds-text-secondary max-sm:hidden">
+                <span className="text-[11px] font-normal text-ds-text-secondary max-sm:hidden md:inline">
                   Mini-player: cuộn lên để xem trong cột
                 </span>
               )}
@@ -452,6 +457,43 @@ export function WorkspacePage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {!focusMode && (
+          <div
+            className="flex w-full flex-wrap gap-2 md:hidden"
+            role="tablist"
+            aria-label="Chuyển Mindmap hoặc AI Tutor"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileStackTab === 'mindmap'}
+              onClick={() => setMobileStackTab('mindmap')}
+              className={`ds-interactive flex min-h-[44px] min-w-[44px] flex-1 items-center justify-center gap-2 rounded-ds-sm border px-3 py-2 text-xs font-bold uppercase tracking-wider touch-manipulation ${
+                mobileStackTab === 'mindmap'
+                  ? 'border-ds-primary bg-ds-primary/15 text-ds-secondary'
+                  : 'border-ds-border text-ds-text-secondary hover:border-ds-primary/40'
+              }`}
+            >
+              <Map className="h-5 w-5 shrink-0" strokeWidth={1.5} aria-hidden />
+              Mindmap
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileStackTab === 'tutor'}
+              onClick={() => setMobileStackTab('tutor')}
+              className={`ds-interactive flex min-h-[44px] min-w-[44px] flex-1 items-center justify-center gap-2 rounded-ds-sm border px-3 py-2 text-xs font-bold uppercase tracking-wider touch-manipulation ${
+                mobileStackTab === 'tutor'
+                  ? 'border-ds-secondary bg-ds-secondary/15 text-ds-secondary'
+                  : 'border-ds-border text-ds-text-secondary hover:border-ds-secondary/40'
+              }`}
+            >
+              <MessageSquare className="h-5 w-5 shrink-0" strokeWidth={1.5} aria-hidden />
+              AI Tutor
+            </button>
+          </div>
+        )}
 
         <div
           ref={workspaceColumnsRef}
@@ -474,7 +516,7 @@ export function WorkspacePage() {
                 ? 'pointer-events-auto fixed inset-0 z-[120] m-0 flex min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none border-0 bg-ds-bg p-3 shadow-none sm:p-5 md:p-6'
                 : fullscreenPanel === 'mindmap' || fullscreenPanel === 'tutor'
                   ? 'hidden'
-                  : `relative order-1 w-full min-w-0 shrink-0 lg:order-none lg:transition-[width] lg:duration-300 lg:ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  : `relative order-1 w-full min-w-0 shrink-0 max-md:sticky max-md:top-14 max-md:z-20 max-md:border-b max-md:border-ds-border/40 max-md:bg-ds-bg/95 max-md:py-2 max-md:backdrop-blur-md lg:order-none lg:transition-[width] lg:duration-300 lg:ease-[cubic-bezier(0.22,1,0.36,1)] ${
                       focusMode ? 'lg:w-[44%] lg:max-w-none' : 'lg:w-[30%]'
                     }`
             }
@@ -510,9 +552,9 @@ export function WorkspacePage() {
                 ? 'pointer-events-auto fixed inset-0 z-[120] m-0 flex min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none border-0 bg-ds-bg p-3 shadow-none sm:p-5 md:p-6'
                 : fullscreenPanel === 'video' || fullscreenPanel === 'tutor'
                   ? 'hidden'
-                  : `relative order-2 min-h-[280px] min-w-0 flex-1 lg:order-none lg:min-h-0 lg:transition-[flex-grow] lg:duration-300 lg:ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  : `relative order-2 min-h-[min(50vh,24rem)] min-w-0 flex-1 max-md:min-h-[min(52vh,26rem)] lg:order-none lg:min-h-0 lg:transition-[flex-grow] lg:duration-300 lg:ease-[cubic-bezier(0.22,1,0.36,1)] ${
                       focusMode ? 'lg:flex-[1.35]' : ''
-                    }`
+                    } ${hideMindmapOnMobile ? 'max-md:hidden' : ''}`
             }
             aria-labelledby="workspace-mindmap-title"
           >
@@ -542,7 +584,7 @@ export function WorkspacePage() {
                     ? 'pointer-events-auto fixed inset-0 z-[120] m-0 flex min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none border-0 bg-ds-bg p-3 shadow-none sm:p-5 md:p-6 lg:!w-full'
                     : fullscreenPanel === 'video' || fullscreenPanel === 'mindmap'
                       ? 'hidden'
-                      : 'relative order-3 w-full min-w-0 shrink-0 lg:order-none lg:w-[26%]'
+                      : `relative order-3 w-full min-w-0 shrink-0 lg:order-none lg:w-[26%]${hideTutorOnMobile ? ' max-md:hidden' : ''}`
                 }
                 aria-labelledby="workspace-tutor-title"
               >

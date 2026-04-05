@@ -105,7 +105,7 @@ export function TutorSidebar() {
                 })
                 .filter((c) => c.text.trim().length > 0)
             : undefined
-          return { id, role, text, citations }
+          return { id, role: role as ChatRole, text, citations }
         })
         .filter((m) => m.text.trim().length > 0)
       setChat(msgs)
@@ -238,7 +238,7 @@ export function TutorSidebar() {
     const q = draft.trim()
     if (!q) return
     if (contextPool.length === 0) {
-      pushToast('Chưa có transcript để hỏi tutor.', 'error')
+      pushToast('Chưa có nội dung từ video để hỏi tutor.', 'error')
       return
     }
     const id =
@@ -313,8 +313,8 @@ export function TutorSidebar() {
 
       {tab === 'summary' ? (
         <>
-          <div className="border-b border-ds-border p-4">
-            <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 border-b border-ds-border p-4">
+            <div className="flex min-w-0 items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={() => setSummaryCollapsed((v) => !v)}
@@ -346,34 +346,38 @@ export function TutorSidebar() {
             </div>
             {!summaryCollapsed ? (
               <>
-                <div className="mt-4 max-h-40 space-y-3 overflow-y-auto overscroll-y-contain pr-2">
-                  <p className="text-sm font-normal leading-relaxed text-ds-text-secondary whitespace-pre-wrap">
+                <div className="scrollbar-hide mt-4 max-h-40 min-w-0 space-y-3 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-2">
+                  <p className="text-sm font-normal leading-relaxed text-ds-text-secondary whitespace-pre-wrap break-words">
                     {tutor?.summary?.trim()
                       ? tutor.summary
                       : 'Chưa có summary từ pipeline. Chạy phân tích từ Dashboard hoặc Admin để nạp dữ liệu.'}
                   </p>
                   {Array.isArray(tutor?.key_points) && tutor.key_points.length > 0 ? (
-                    <ul className="space-y-2">
+                    <ul className="min-w-0 space-y-2">
                       {tutor.key_points.slice(0, 12).map((kp, i) => (
                         <li
                           key={`kp-${i}`}
-                          className="rounded-ds-sm bg-ds-border/15 px-3 py-2 text-xs text-ds-text-primary"
+                          className="min-w-0 max-w-full rounded-ds-sm bg-ds-border/15 px-3 py-2 text-xs text-ds-text-primary"
                         >
                           <button
                             type="button"
-                            className="ds-interactive w-full text-left"
+                            className="ds-interactive flex w-full min-w-0 items-start gap-2 text-left"
                             onClick={() => {
                               const sec = Number(kp.timestamp_seconds)
                               if (!Number.isFinite(sec)) return
                               const r = requestSeek(sec, `kp-${i}`)
                               if (!r.ok) pushToast(r.message, 'error')
                             }}
+                            title={kp.text || 'Key point'}
                           >
-                            <span className="font-mono text-ds-secondary">
+                            <span className="shrink-0 whitespace-nowrap font-mono text-ds-secondary tabular-nums">
                               {formatClipRange(Number(kp.timestamp_seconds) || 0, Number(kp.timestamp_seconds) || 0)
                                 .split(' → ')[0]}
-                            </span>{' '}
-                            · {kp.text || 'Key point'}
+                            </span>
+                            <span className="block min-w-0 flex-1 break-words leading-snug text-ds-text-primary line-clamp-4">
+                              <span className="text-ds-text-secondary">· </span>
+                              {kp.text || 'Key point'}
+                            </span>
                           </button>
                         </li>
                       ))}
@@ -386,7 +390,10 @@ export function TutorSidebar() {
           <div className="flex min-h-0 flex-1 flex-col p-4">
             <h3 className="ds-text-label text-ds-text-secondary">AI tutor</h3>
             <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-ds-sm bg-ds-bg/60">
-              <div ref={chatHolderRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain p-4">
+              <div
+                ref={chatHolderRef}
+                className="scrollbar-hide min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-y-contain p-4 pb-5"
+              >
                 {chat.length === 0 ? (
                   <div className="rounded-ds-sm bg-ds-border/20 p-3 text-sm text-ds-text-primary">
                     Hỏi bất kỳ điều gì dựa trên nội dung bài giảng. Tutor sẽ trả lời kèm mốc thời gian để bạn nhảy tới đoạn liên quan.
@@ -395,30 +402,30 @@ export function TutorSidebar() {
                 {chat.map((m) => (
                   <div
                     key={m.id}
-                    className={`rounded-ds-sm border p-3 ${
+                    className={`min-w-0 max-w-full rounded-ds-sm border p-3 ${
                       m.role === 'user'
                         ? 'border-ds-primary/30 bg-ds-primary/10 text-ds-text-primary'
                         : 'border-ds-border/70 bg-ds-bg/40 text-ds-text-primary'
                     }`}
                   >
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.text}</p>
+                    <p className="break-words whitespace-pre-wrap text-sm leading-relaxed">{m.text}</p>
                     {m.role === 'assistant' && m.citations && m.citations.length > 0 ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="mt-3 flex w-full min-w-0 flex-col gap-2">
                         {m.citations.slice(0, 3).map((c, i) => (
                           <button
                             key={`${m.id}-c-${i}-${c.start}`}
                             type="button"
-                            className="ds-interactive inline-flex items-center gap-2 rounded-ds-sm border border-ds-border bg-ds-bg/60 px-2.5 py-1.5 text-[11px] font-bold text-ds-secondary hover:bg-ds-border/30"
+                            className="ds-interactive flex w-full min-w-0 max-w-full items-center gap-2 rounded-ds-sm border border-ds-border bg-ds-bg/60 px-2.5 py-1.5 text-left text-[11px] font-bold text-ds-secondary hover:bg-ds-border/30"
                             onClick={() => {
                               const r = requestSeek(c.start, `${m.id}-cite-${i}`)
                               if (!r.ok) pushToast(r.message, 'error')
                             }}
                             title={c.text}
                           >
-                            <span className="font-mono text-ds-secondary">
+                            <span className="shrink-0 whitespace-nowrap font-mono text-ds-secondary tabular-nums">
                               {formatClipRange(c.start, c.end).split(' → ')[0]}
                             </span>
-                            <span className="max-w-[16rem] truncate text-ds-text-secondary">
+                            <span className="min-w-0 flex-1 truncate text-ds-text-secondary">
                               {c.text}
                             </span>
                           </button>
@@ -437,7 +444,7 @@ export function TutorSidebar() {
               <div className="border-t border-ds-border/70 p-3">
                 {contextPool.length === 0 ? (
                   <p className="text-xs text-ds-text-secondary">
-                    Chưa có transcript. Hãy chạy pipeline để tutor có dữ liệu trả lời.
+                    Chưa có dữ liệu từ video. Hãy chạy pipeline để tutor có nội dung trả lời.
                   </p>
                 ) : null}
               </div>
@@ -452,7 +459,7 @@ export function TutorSidebar() {
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder={contextPool.length === 0 ? 'Chưa có transcript…' : 'Hỏi tutor…'}
+                placeholder={contextPool.length === 0 ? 'Chưa có nội dung video…' : 'Hỏi tutor…'}
                 className="ds-transition flex-1 rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-2 text-sm text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
                 disabled={contextPool.length === 0 || asking}
               />
@@ -473,7 +480,8 @@ export function TutorSidebar() {
             <div>
               <h2 className="text-sm font-bold text-ds-text-primary">Highlights</h2>
               <p className="mt-1 text-xs leading-relaxed text-ds-text-secondary">
-                Chuột phải vào nút trên Neural map, chọn Lưu vào mục ưa thích.
+                Chuột phải hoặc double-click nút trên Neural map → <strong>Lưu vào mục ưa thích</strong> (màn hình cảm
+                ứng: double-tap).
               </p>
             </div>
           </div>
@@ -494,7 +502,7 @@ export function TutorSidebar() {
               </button>
             </div>
           ) : null}
-          <div className="mt-4 flex-1 overflow-y-auto overscroll-y-contain">
+          <div className="scrollbar-hide mt-4 flex-1 overflow-y-auto overscroll-y-contain">
             {mindmapHighlights.length === 0 ? (
               <div
                 className="flex flex-col items-center gap-3 rounded-ds-lg border border-ds-border border-dashed bg-ds-border/10 px-4 py-8 text-center"
@@ -503,7 +511,8 @@ export function TutorSidebar() {
                 <BookmarkX className="h-10 w-10 text-ds-text-secondary" strokeWidth={1.5} aria-hidden />
                 <p className="text-sm font-bold text-ds-text-primary">Chưa có bookmark nào</p>
                 <p className="max-w-[18rem] text-xs leading-relaxed text-ds-text-secondary">
-                  Lưu clip từ Neural map (chuột phải nút → Lưu vào mục ưa thích) để ôn nhanh từng khối kiến thức.
+                  Lưu clip từ Neural map (chuột phải hoặc double-click nút → Lưu vào mục ưa thích) để ôn nhanh từng
+                  khối kiến thức.
                 </p>
               </div>
             ) : (

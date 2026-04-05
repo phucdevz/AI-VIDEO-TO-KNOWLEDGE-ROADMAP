@@ -5,7 +5,13 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    /** Tránh lỗi "Outdated Optimize Dep" khi HMR/cập nhật @xyflow/react. */
-    include: ['@xyflow/react', '@xyflow/system'],
+    /** Ép pre-bundle ổn định; thiếu entry dễ gây 504 Outdated Optimize Dep sau khi đổi deps. */
+    include: [
+      '@xyflow/react',
+      '@xyflow/system',
+      'elkjs/lib/elk.bundled.js',
+      'lucide-react',
+      'react-hot-toast',
+    ],
   },
 })

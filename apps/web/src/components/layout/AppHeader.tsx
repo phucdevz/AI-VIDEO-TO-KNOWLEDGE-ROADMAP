@@ -1,6 +1,7 @@
-import { Search } from 'lucide-react'
-import { useLocation } from 'react-router-dom'
+import { LogOut, Search } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { AvatarWithNotificationBell } from './AvatarWithNotificationBell'
+import { useAppStore } from '../../stores/useAppStore'
 import { useAuthStore } from '../../stores/useAuthStore'
 
 const TITLES: Record<string, string> = {
@@ -21,7 +22,7 @@ function SearchField({ className }: { className?: string }) {
       />
       <input
         type="search"
-        placeholder="Search lectures, topics…"
+        placeholder="Tìm bài giảng, chủ đề…"
         className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 py-2 pl-10 pr-4 text-base text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40 md:text-sm"
         aria-label="Global search"
       />
@@ -29,10 +30,15 @@ function SearchField({ className }: { className?: string }) {
   )
 }
 
+const ICON_STROKE = 1.5 as const
+
 export function AppHeader() {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const title = TITLES[pathname] ?? 'Dashboard'
   const user = useAuthStore((s) => s.user)
+  const signOut = useAuthStore((s) => s.signOut)
+  const unbindLibrary = useAppStore((s) => s.unbindLibraryRealtime)
 
   const meta = user?.user_metadata as { full_name?: string; display_name?: string; avatar_url?: string } | undefined
   const appMeta = user?.app_metadata as { full_name?: string; avatar_url?: string } | undefined
@@ -57,7 +63,20 @@ export function AppHeader() {
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center md:order-3">
+          <div className="flex shrink-0 items-center gap-1 md:order-3 md:gap-0">
+            <button
+              type="button"
+              className="ds-interactive-icon rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/30 hover:text-ds-secondary md:hidden"
+              aria-label="Đăng xuất"
+              title="Đăng xuất"
+              onClick={async () => {
+                unbindLibrary()
+                await signOut()
+                navigate('/login', { replace: true })
+              }}
+            >
+              <LogOut className="h-6 w-6" strokeWidth={ICON_STROKE} aria-hidden />
+            </button>
             <AvatarWithNotificationBell
               variant="header"
               displayName={displayName}

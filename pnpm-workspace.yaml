@@ -1,0 +1,5 @@
+# Aligns with npm "workspaces" in package.json so pnpm links local packages
+# (e.g. @ether/design-tokens → packages/design-tokens).
+packages:
+  - "apps/*"
+  - "packages/*"

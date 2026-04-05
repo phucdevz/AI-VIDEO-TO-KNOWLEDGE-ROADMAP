@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PageMeta } from '../components/seo'
 import { downloadQuizPdf, postAudioExtraction } from '../lib/api'
 import { fetchLecturesRows, getSupabase, isSupabaseConfigured } from '../lib/supabase'
+import { friendlySupabaseError } from '../lib/userFacingErrors'
 import type { LibraryLectureRow } from '../stores/useAppStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useAuthStore } from '../stores/useAuthStore'
@@ -18,13 +19,6 @@ type QuizQuestion = {
   explanation?: string
   evidence?: { start: number; end: number; text: string }[]
   timestamp_seconds?: number
-}
-
-function fmtTime(total: number) {
-  const s = Number.isFinite(total) ? Math.max(0, total) : 0
-  const m = Math.floor(s / 60)
-  const r = Math.floor(s % 60)
-  return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
 }
 
 function parseQuizFromLecture(row: LibraryLectureRow): { title?: string; questions: QuizQuestion[] } | null {
@@ -93,7 +87,7 @@ export function QuizCenterPage() {
     setLoading(true)
     const { data, error } = await fetchLecturesRows(supabase, uid)
     if (error) {
-      pushToast(error.message, 'error')
+      pushToast(friendlySupabaseError(error), 'error')
       setLectures([])
     } else {
       setLectures((data as LibraryLectureRow[]) ?? [])
@@ -137,7 +131,7 @@ export function QuizCenterPage() {
 
   if (!isSupabaseConfigured() || !user) {
     return (
-      <div className="mx-auto max-w-ds px-4 py-16 text-center text-ds-text-secondary">
+      <div className="mx-auto w-full max-w-7xl px-4 py-16 text-center text-ds-text-secondary sm:px-6 lg:px-8">
         <PageMeta path="/quiz" title="Quiz Center" description="EtherAI quiz." />
         <p className="text-sm font-bold">Cần đăng nhập để làm quiz từ thư viện.</p>
       </div>
@@ -145,35 +139,35 @@ export function QuizCenterPage() {
   }
 
   return (
-    <div className="mx-auto max-w-ds space-y-8 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+    <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-5 sm:space-y-8 sm:px-6 sm:py-6 lg:max-w-7xl lg:px-8 lg:py-8">
       <PageMeta
         path="/quiz"
         title="Quiz Center"
         description="Quiz Center đang chờ nguồn dữ liệu thật."
       />
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <p className="ds-text-label text-ds-secondary">Assessment</p>
-          <h2 className="text-2xl font-bold text-ds-text-primary">Quiz center</h2>
-          <p className="mt-2 text-base text-ds-text-secondary md:text-sm">
-            Chọn một bài giảng đã có quiz và bắt đầu làm bài.
+          <h2 className="text-xl font-bold tracking-tight text-ds-text-primary sm:text-2xl">Quiz center</h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-ds-text-secondary">
+            Chọn bài giảng đã có quiz và bắt đầu làm bài.
           </p>
         </div>
-        <aside className="ds-surface-glass flex items-center gap-4 rounded-ds-lg border border-ds-border px-6 py-4 shadow-ds-soft backdrop-blur-[10px]">
-          <Trophy className="h-8 w-8 text-ds-secondary" strokeWidth={1.5} />
+        <aside className="ds-surface-glass flex shrink-0 items-center gap-3 self-start rounded-ds-lg border border-ds-border/70 px-4 py-3 shadow-ds-soft backdrop-blur-[10px] sm:px-5">
+          <Trophy className="h-7 w-7 shrink-0 text-ds-secondary sm:h-8 sm:w-8" strokeWidth={1.5} aria-hidden />
           <div>
-            <p className="text-[14px] font-bold uppercase text-ds-text-secondary md:text-xs">Phase</p>
-            <p className="text-xl font-bold capitalize text-ds-text-primary">{phase}</p>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-ds-text-secondary">Giai đoạn</p>
+            <p className="text-lg font-bold capitalize leading-none text-ds-text-primary sm:text-xl">{phase}</p>
           </div>
         </aside>
       </header>
 
       {phase === 'pick' && (
-        <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px]">
-          <h3 className="text-lg font-bold text-ds-text-primary">Danh sách bài giảng</h3>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-ds-text-secondary">Quiz difficulty</p>
-            <div className="flex flex-wrap gap-2">
+        <section className="ds-surface-glass rounded-ds-lg border border-ds-border/80 p-4 shadow-ds-soft backdrop-blur-[10px] sm:p-6 lg:p-8">
+          <h3 className="text-base font-bold text-ds-text-primary sm:text-lg">Danh sách bài giảng</h3>
+          <div className="mt-4 flex flex-col gap-3 sm:mt-5 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-ds-text-secondary">Độ khó quiz (tạo mới)</p>
+            <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:justify-end">
               {(['easy', 'medium', 'hard'] as const).map((v) => (
                 <button
                   key={v}
@@ -182,17 +176,17 @@ export function QuizCenterPage() {
                     setQuizDifficulty(v)
                     pushToast(
                       v === 'easy'
-                        ? 'Đã chọn Easy. Quiz mới tạo tiếp theo sẽ theo mức này.'
+                        ? 'Đã chọn mức dễ. Các quiz tạo mới sẽ dùng mức này.'
                         : v === 'hard'
-                          ? 'Đã chọn Hard. Quiz mới tạo tiếp theo sẽ theo mức này.'
-                          : 'Đã chọn Medium. Quiz mới tạo tiếp theo sẽ theo mức này.',
+                          ? 'Đã chọn mức khó. Các quiz tạo mới sẽ dùng mức này.'
+                          : 'Đã chọn mức trung bình. Các quiz tạo mới sẽ dùng mức này.',
                       'default',
                     )
                   }}
-                  className={`ds-interactive rounded-ds-sm px-4 py-2 text-sm font-bold capitalize ${
+                  className={`ds-interactive min-h-[40px] rounded-ds-sm px-3 py-2 text-xs font-bold capitalize sm:min-h-0 sm:px-4 sm:text-sm ${
                     quizDifficulty === v
-                      ? 'bg-ds-secondary/30 text-ds-text-primary ring-2 ring-ds-secondary hover:brightness-110'
-                      : 'border border-ds-border text-ds-text-secondary hover:bg-ds-border/30'
+                      ? 'bg-ds-secondary/25 text-ds-text-primary ring-1 ring-ds-secondary/80'
+                      : 'border border-ds-border/60 bg-ds-bg/30 text-ds-text-secondary hover:bg-ds-border/20'
                   }`}
                 >
                   {v}
@@ -210,14 +204,15 @@ export function QuizCenterPage() {
               </p>
             </div>
           ) : (
-            <ul className="mt-6 space-y-3">
-              {lectureWithQuiz.map((l) => (
-                <li key={l.id}>
-                  <div className="w-full rounded-ds-sm border border-ds-border bg-ds-bg/40 px-4 py-4 text-left">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
+            <ul className="mt-5 space-y-3 sm:mt-6">
+              {lectureWithQuiz.map((l) => {
+                const nQ = parseQuizFromLecture(l)?.questions.length ?? 0
+                return (
+                  <li key={l.id}>
+                    <div className="overflow-hidden rounded-ds-lg border border-ds-border/50 bg-ds-bg/25 shadow-ds-soft transition-colors hover:border-ds-border hover:bg-ds-bg/35">
                       <button
                         type="button"
-                        className="ds-interactive min-w-0 flex-1 text-left"
+                        className="ds-interactive w-full px-4 pb-2 pt-4 text-left sm:px-5 sm:pb-2 sm:pt-5"
                         onClick={() => {
                           setActiveLecture(l)
                           setIndex(0)
@@ -226,25 +221,29 @@ export function QuizCenterPage() {
                           setPhase('quiz')
                         }}
                       >
-                        <p className="font-bold text-ds-text-primary">{(l.title ?? 'Untitled').slice(0, 80)}</p>
-                        <p className="mt-1 text-xs font-normal text-ds-text-secondary">
-                          {parseQuizFromLecture(l)?.questions.length ?? 0} câu hỏi
+                        <p className="line-clamp-3 text-[15px] font-semibold leading-snug text-ds-text-primary sm:line-clamp-2 sm:text-base">
+                          {l.title ?? 'Chưa có tiêu đề'}
                         </p>
+                        <p className="mt-2 text-xs text-ds-text-secondary">{nQ} câu hỏi · chạm để làm bài</p>
                       </button>
-                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <div className="grid grid-cols-2 gap-2 border-t border-ds-border/40 px-4 py-3 sm:flex sm:justify-end sm:gap-2 sm:px-5">
                         <button
                           type="button"
-                          className="ds-interactive inline-flex items-center gap-2 rounded-ds-sm border border-ds-border px-3 py-2 text-xs font-bold uppercase tracking-wider text-ds-text-secondary hover:bg-ds-border/25 hover:text-ds-text-primary disabled:opacity-50"
-                          onClick={() => exportQuizPdf(l)}
+                          className="ds-interactive inline-flex min-h-[44px] items-center justify-center gap-2 rounded-ds-sm border border-ds-border/70 bg-ds-bg/40 px-3 text-xs font-bold uppercase tracking-wide text-ds-text-secondary hover:bg-ds-border/20 hover:text-ds-text-primary"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void exportQuizPdf(l)
+                          }}
                         >
-                          <FileDown className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+                          <FileDown className="h-4 w-4 shrink-0" strokeWidth={1.5} aria-hidden />
                           PDF
                         </button>
                         <button
                           type="button"
                           disabled={regenBusyId === l.id}
-                          className="ds-interactive inline-flex items-center gap-2 rounded-ds-sm border border-ds-secondary/40 bg-ds-secondary/10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-ds-secondary hover:bg-ds-secondary/20 disabled:opacity-50"
-                          onClick={async () => {
+                          className="ds-interactive inline-flex min-h-[44px] items-center justify-center gap-2 rounded-ds-sm border border-ds-secondary/35 bg-ds-secondary/10 px-3 text-xs font-bold uppercase tracking-wide text-ds-secondary hover:bg-ds-secondary/18 disabled:opacity-50"
+                          onClick={async (e) => {
+                            e.stopPropagation()
                             const url = (l.video_url ?? l.source_url ?? '').trim()
                             if (!url) {
                               pushToast('Thiếu video URL để tạo lại quiz.', 'error')
@@ -262,21 +261,21 @@ export function QuizCenterPage() {
                             }
                           }}
                         >
-                          <RefreshCw className={`h-4 w-4 ${regenBusyId === l.id ? 'animate-spin' : ''}`} strokeWidth={1.5} aria-hidden />
+                          <RefreshCw className={`h-4 w-4 shrink-0 ${regenBusyId === l.id ? 'animate-spin' : ''}`} strokeWidth={1.5} aria-hidden />
                           {regenBusyId === l.id ? 'Đang tạo…' : 'Tạo lại'}
                         </button>
                       </div>
                     </div>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
       )}
 
       {phase === 'quiz' && quiz && current && (
-        <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px]">
+        <section className="ds-surface-glass rounded-ds-lg border border-ds-border/80 p-4 shadow-ds-soft backdrop-blur-[10px] sm:p-6 lg:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
@@ -366,7 +365,7 @@ export function QuizCenterPage() {
       )}
 
       {phase === 'result' && activeLecture && quiz && (
-        <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px]">
+        <section className="ds-surface-glass rounded-ds-lg border border-ds-border/80 p-4 shadow-ds-soft backdrop-blur-[10px] sm:p-6 lg:p-8">
           <h3 className="text-lg font-bold text-ds-text-primary">Kết quả</h3>
           <p className="mt-2 text-sm text-ds-text-secondary">
             Bạn đúng <span className="font-bold text-ds-secondary">{score}</span> / {questions.length} câu.
@@ -401,7 +400,7 @@ export function QuizCenterPage() {
                     answers,
                   })
                   if (error) {
-                    pushToast(`Lưu kết quả: ${error.message}`, 'error')
+                    pushToast(friendlySupabaseError(error), 'error')
                   } else {
                     pushToast('Đã lưu kết quả quiz.', 'success')
                   }

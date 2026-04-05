@@ -51,7 +51,7 @@ export function DashboardIntroTabs({ noCard }: DashboardIntroTabsProps) {
         ))}
       </div>
 
-      <div className="mt-4 max-h-[min(52vh,28rem)] overflow-y-auto pr-1 sm:max-h-none sm:overflow-visible">
+      <div className="scrollbar-hide mt-4 max-h-[min(52vh,28rem)] overflow-y-auto pr-1 sm:max-h-none sm:overflow-visible">
         {tab === 'overview' && (
           <div
             role="tabpanel"

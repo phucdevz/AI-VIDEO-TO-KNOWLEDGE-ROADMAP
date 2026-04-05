@@ -28,7 +28,7 @@ const NAV_ITEMS: NavDef[] = [
 ]
 
 export function MainSidebar() {
-  const { mobileNavOpen, setMobileNavOpen, sidebarCollapsed, toggleSidebarCollapsed } = useShell()
+  const { sidebarCollapsed, toggleSidebarCollapsed } = useShell()
   const user = useAuthStore((s) => s.user)
   const signOut = useAuthStore((s) => s.signOut)
   const unbindLibrary = useAppStore((s) => s.unbindLibraryRealtime)
@@ -46,22 +46,14 @@ export function MainSidebar() {
     .slice(0, 2)
     .toUpperCase() || '·'
 
-  const closeIfMobile = () => {
-    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) {
-      setMobileNavOpen(false)
-    }
-  }
-
   return (
     <aside
       id="main-navigation"
       className={[
         'hidden md:flex md:flex-col',
         'ds-surface-glass shadow-ds-soft fixed left-0 top-0 z-[70] h-screen rounded-r-ds-lg border-r border-ds-border',
-        'w-64 max-w-[min(100vw,20rem)] transition-transform duration-300 ease-out',
-        'max-md:-translate-x-full',
-        mobileNavOpen && 'max-md:translate-x-0',
-        'md:z-40 md:translate-x-0 md:rounded-r-ds-lg md:transition-none',
+        'w-64 max-w-[min(100vw,20rem)] md:transition-none',
+        'md:z-40 md:rounded-r-ds-lg',
         'md:w-16',
         sidebarCollapsed ? 'lg:w-16' : 'lg:w-64',
       ].join(' ')}
@@ -130,7 +122,6 @@ export function MainSidebar() {
               to={to}
               end={end}
               title={label}
-              onClick={closeIfMobile}
               className={({ isActive }) =>
                 [
                   'ds-interactive flex items-center gap-2 rounded-ds-sm py-2 outline-none',
@@ -186,7 +177,6 @@ export function MainSidebar() {
             type="button"
             title="Sign out"
             onClick={async () => {
-              closeIfMobile()
               unbindLibrary()
               await signOut()
               navigate('/login', { replace: true })
