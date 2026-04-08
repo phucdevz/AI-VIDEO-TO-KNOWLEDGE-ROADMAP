@@ -1,6 +1,7 @@
 import { Bookmark, BookmarkX, ChevronDown, ChevronUp, Loader2, Play, Send, Sparkles, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { postTutorAsk } from '../../lib/api'
+import { useAppStore } from '../../stores/useAppStore'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useToastStore } from '../../stores/useToastStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -108,6 +109,7 @@ export function TutorSidebar() {
   const pipelineLectureId = useWorkspaceStore((s) => s.pipelineLectureId)
   const pipelineVideoUrl = useWorkspaceStore((s) => s.pipelineVideoUrl ?? s.pipelineSourceUrl)
   const authUser = useAuthStore((s) => s.user)
+  const language = useAppStore((s) => s.language)
   const userId = useAuthStore((s) => s.user?.id ?? null)
   const pushToast = useToastStore((s) => s.pushToast)
   const tutorDisplayName = useMemo(() => {
@@ -292,6 +294,7 @@ export function TutorSidebar() {
   )
 
   const canAsk = contextPool.length > 0 && !asking
+  const isVi = language === 'vi'
 
   useEffect(() => {
     const el = chatHolderRef.current
@@ -340,7 +343,7 @@ export function TutorSidebar() {
           citations: r.citations ?? [],
         },
       ])
-    } catch (e) {
+    } catch {
       // toast already handled by api interceptor
     } finally {
       setAsking(false)
@@ -366,7 +369,7 @@ export function TutorSidebar() {
           onClick={() => setTab('summary')}
         >
           <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.5} />
-          Summary
+          {isVi ? 'Tóm tắt' : 'Summary'}
         </button>
         <button
           type="button"
@@ -380,7 +383,7 @@ export function TutorSidebar() {
           onClick={() => setTab('highlights')}
         >
           <Bookmark className="h-4 w-4 shrink-0" strokeWidth={1.5} />
-          Highlights
+          {isVi ? 'Điểm nhấn' : 'Highlights'}
         </button>
       </div>
 
@@ -400,7 +403,7 @@ export function TutorSidebar() {
                   id="workspace-tutor-title"
                   className="min-w-0 flex-1 truncate text-sm font-bold text-ds-text-primary"
                 >
-                  Auto-summary
+                  {isVi ? 'Tóm tắt tự động' : 'Auto-summary'}
                 </h2>
                 {summaryCollapsed ? (
                   <ChevronDown className="h-4 w-4 shrink-0 text-ds-text-secondary" strokeWidth={2} aria-hidden />
@@ -413,7 +416,7 @@ export function TutorSidebar() {
                   type="button"
                   className="ds-interactive shrink-0 inline-flex items-center gap-2 rounded-ds-sm border border-ds-border bg-ds-bg/40 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wider text-ds-text-secondary hover:bg-ds-border/30 hover:text-ds-text-primary"
                 >
-                  Export
+                  {isVi ? 'Xuất' : 'Export'}
                 </button>
               ) : null}
             </div>
@@ -461,7 +464,7 @@ export function TutorSidebar() {
             ) : null}
           </div>
           <div className="flex min-h-0 flex-1 flex-col p-4">
-            <h3 className="ds-text-label text-ds-text-secondary">AI tutor</h3>
+            <h3 className="ds-text-label text-ds-text-secondary">{isVi ? 'Trợ giảng AI' : 'AI tutor'}</h3>
             <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-ds-sm bg-ds-bg/60">
               <div
                 ref={chatHolderRef}
@@ -532,7 +535,15 @@ export function TutorSidebar() {
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder={contextPool.length === 0 ? 'Chưa có nội dung video…' : 'Hỏi tutor…'}
+                placeholder={
+                  contextPool.length === 0
+                    ? isVi
+                      ? 'Chưa có nội dung video…'
+                      : 'No video content yet…'
+                    : isVi
+                      ? 'Hỏi tutor…'
+                      : 'Ask tutor…'
+                }
                 className="ds-transition flex-1 rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-2 text-sm text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
                 disabled={contextPool.length === 0 || asking}
               />
@@ -540,7 +551,7 @@ export function TutorSidebar() {
                 type="submit"
                 disabled={!canAsk || draft.trim().length === 0}
                 className="ds-interactive flex h-10 w-10 shrink-0 items-center justify-center rounded-ds-sm bg-ds-primary text-ds-text-primary hover:opacity-90 disabled:opacity-50"
-                aria-label="Send"
+                aria-label={isVi ? 'Gửi' : 'Send'}
               >
                 <Send className="h-5 w-5" strokeWidth={1.5} />
               </button>
@@ -551,7 +562,7 @@ export function TutorSidebar() {
         <div className="flex min-h-0 flex-1 flex-col p-4">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h2 className="text-sm font-bold text-ds-text-primary">Highlights</h2>
+              <h2 className="text-sm font-bold text-ds-text-primary">{isVi ? 'Điểm nhấn' : 'Highlights'}</h2>
               <p className="mt-1 text-xs leading-relaxed text-ds-text-secondary">
                 Chuột phải hoặc double-click nút trên Neural map → <strong>Lưu vào mục ưa thích</strong> (màn hình cảm
                 ứng: double-tap).

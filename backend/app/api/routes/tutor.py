@@ -75,7 +75,7 @@ async def ask_tutor(
             detail="Missing transcript segments. Provide segments or lecture_id/video_url.",
         )
 
-    groq_key = settings.groq_api_key
+    groq_key = settings.effective_groq_chat_key
     google_key = settings.google_api_key
     if body.user_id and db.is_configured:
         u_groq, u_google = db.get_user_api_keys(body.user_id)

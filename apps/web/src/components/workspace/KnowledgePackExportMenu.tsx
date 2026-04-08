@@ -8,6 +8,7 @@ import {
   type KnowledgePackExportContext,
 } from '../../lib/exportKnowledgePack'
 import { friendlyAxiosErrorMessage } from '../../lib/userFacingErrors'
+import { useAppStore } from '../../stores/useAppStore'
 
 type KnowledgePackExportMenuProps = {
   ctx: KnowledgePackExportContext
@@ -25,6 +26,8 @@ export function KnowledgePackExportMenu({
   onError,
   onSuccess,
 }: KnowledgePackExportMenuProps) {
+  const language = useAppStore((s) => s.language)
+  const isVi = language === 'vi'
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<'png' | 'md' | 'pdf' | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -72,13 +75,13 @@ export function KnowledgePackExportMenu({
       try {
         if (kind === 'png') {
           await exportWorkspaceMindmapPng(mindmapFilenameBase)
-          onSuccess?.('Đã tải ảnh mindmap (PNG).')
+          onSuccess?.(isVi ? 'Đã tải ảnh mindmap (PNG).' : 'Mindmap image downloaded (PNG).')
         } else if (kind === 'md') {
           downloadKnowledgePackMarkdown(ctx)
-          onSuccess?.('Đã tải Knowledge Pack (.md).')
+          onSuccess?.(isVi ? 'Đã tải Knowledge Pack (.md).' : 'Knowledge Pack downloaded (.md).')
         } else {
           await downloadKnowledgePackPdf(ctx)
-          onSuccess?.('Đã tải Knowledge Pack (PDF).')
+          onSuccess?.(isVi ? 'Đã tải Knowledge Pack (PDF).' : 'Knowledge Pack downloaded (PDF).')
         }
         setOpen(false)
       } catch (e) {
@@ -95,7 +98,7 @@ export function KnowledgePackExportMenu({
       <div
         ref={menuPanelRef}
         role="menu"
-        aria-label="Xuất Knowledge Pack"
+        aria-label={isVi ? 'Xuất Knowledge Pack' : 'Export Knowledge Pack'}
         style={{
           position: 'fixed',
           top: menuFixed.top,
@@ -112,7 +115,7 @@ export function KnowledgePackExportMenu({
           onClick={() => void run('png')}
         >
           <ImageDown className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
-          {busy === 'png' ? 'Đang xuất PNG…' : 'Mindmap — PNG (HD)'}
+          {busy === 'png' ? (isVi ? 'Đang xuất PNG…' : 'Exporting PNG…') : isVi ? 'Mindmap — PNG (HD)' : 'Mindmap — PNG (HD)'}
         </button>
         <button
           type="button"
@@ -122,7 +125,7 @@ export function KnowledgePackExportMenu({
           onClick={() => void run('md')}
         >
           <FileText className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
-          {busy === 'md' ? 'Đang tải…' : 'Tóm tắt + Quiz — Markdown'}
+          {busy === 'md' ? (isVi ? 'Đang tải…' : 'Downloading…') : isVi ? 'Tóm tắt + Quiz — Markdown' : 'Summary + Quiz — Markdown'}
         </button>
         <button
           type="button"
@@ -132,7 +135,7 @@ export function KnowledgePackExportMenu({
           onClick={() => void run('pdf')}
         >
           <FileDown className="h-4 w-4 shrink-0 text-ds-secondary" strokeWidth={1.5} />
-          {busy === 'pdf' ? 'Đang tạo PDF…' : 'Tóm tắt + Quiz — PDF'}
+          {busy === 'pdf' ? (isVi ? 'Đang tạo PDF…' : 'Generating PDF…') : isVi ? 'Tóm tắt + Quiz — PDF' : 'Summary + Quiz — PDF'}
         </button>
       </div>
     ) : null
@@ -153,7 +156,7 @@ export function KnowledgePackExportMenu({
         }`}
       >
         <FileDown className="h-4 w-4" strokeWidth={1.5} aria-hidden />
-        Knowledge Pack
+        {isVi ? 'Gói kiến thức' : 'Knowledge Pack'}
         <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
       </button>
       {menuPanel && createPortal(menuPanel, document.body)}

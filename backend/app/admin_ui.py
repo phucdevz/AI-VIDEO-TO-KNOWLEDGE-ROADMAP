@@ -328,7 +328,8 @@ def _supabase_ping() -> bool:
 
 def connectivity_status_html() -> str:
     s = get_settings()
-    groq_ok = bool((s.groq_api_key or "").strip())
+    groq_chat_ok = bool((s.effective_groq_chat_key or "").strip())
+    groq_whisper_ok = bool((s.effective_groq_whisper_key or "").strip())
     gem_ok = bool((s.google_api_key or "").strip())
     supa_ok = _supabase_ping()
 
@@ -339,17 +340,20 @@ def connectivity_status_html() -> str:
 
     return (
         '<div class="admin-card" style="padding:12px;">'
-        f"{row('Groq API', groq_ok)}"
+        f"{row('Groq Chat API', groq_chat_ok)}"
+        f"{row('Groq Whisper API', groq_whisper_ok)}"
         f"{row('Google (Gemini)', gem_ok)}"
         f"{row('Supabase', supa_ok)}"
         "</div>"
     )
 
 
-def _load_config_inputs() -> tuple[str, str, str, str, str]:
+def _load_config_inputs() -> tuple[str, str, str, str, str, str, str]:
     v = read_env_values()
     return (
         v.get("GROQ_API_KEY", ""),
+        v.get("GROQ_CHAT_API_KEY", ""),
+        v.get("GROQ_WHISPER_API_KEY", ""),
         v.get("GOOGLE_API_KEY", ""),
         v.get("SUPABASE_URL", ""),
         v.get("SUPABASE_KEY", ""),
@@ -359,6 +363,8 @@ def _load_config_inputs() -> tuple[str, str, str, str, str]:
 
 def _save_config(
     groq: str,
+    groq_chat: str,
+    groq_whisper: str,
     google: str,
     supabase_url: str,
     supabase_key: str,
@@ -371,6 +377,8 @@ def _save_config(
         write_env_updates(
             {
                 "GROQ_API_KEY": groq.strip(),
+                "GROQ_CHAT_API_KEY": groq_chat.strip(),
+                "GROQ_WHISPER_API_KEY": groq_whisper.strip(),
                 "GOOGLE_API_KEY": google.strip(),
                 "SUPABASE_URL": supabase_url.strip(),
                 "SUPABASE_KEY": supabase_key.strip(),
@@ -910,6 +918,12 @@ def build_admin_blocks() -> gr.Blocks:
                             conn_out = gr.HTML()
                         refresh_conn.click(connectivity_status_html, outputs=conn_out)
                         groq_in = gr.Textbox(label="GROQ_API_KEY", type="password", lines=1)
+                        groq_chat_in = gr.Textbox(label="GROQ_CHAT_API_KEY (optional override)", type="password", lines=1)
+                        groq_whisper_in = gr.Textbox(
+                            label="GROQ_WHISPER_API_KEY (optional override)",
+                            type="password",
+                            lines=1,
+                        )
                         google_in = gr.Textbox(label="GOOGLE_API_KEY (Gemini)", type="password", lines=1)
                         supa_url = gr.Textbox(label="SUPABASE_URL", lines=1)
                         supa_key = gr.Textbox(label="SUPABASE_KEY", type="password", lines=1)
@@ -924,7 +938,7 @@ def build_admin_blocks() -> gr.Blocks:
                         save_out = gr.Markdown()
                         save_btn.click(
                             _save_config,
-                            [groq_in, google_in, supa_url, supa_key, ai_provider],
+                            [groq_in, groq_chat_in, groq_whisper_in, google_in, supa_url, supa_key, ai_provider],
                             save_out,
                         )
                         reload_btn.click(
@@ -1010,7 +1024,10 @@ def build_admin_blocks() -> gr.Blocks:
             outputs=[run_log, metrics_md, full_json, pipe_status, gauge_html],
         )
 
-        demo.load(_load_config_inputs, outputs=[groq_in, google_in, supa_url, supa_key, ai_provider])
+        demo.load(
+            _load_config_inputs,
+            outputs=[groq_in, groq_chat_in, groq_whisper_in, google_in, supa_url, supa_key, ai_provider],
+        )
         demo.load(_refresh_analytics_bundle, outputs=[trend_html, analytics_md])
         demo.load(build_health_markdown, outputs=health_md)
         demo.load(

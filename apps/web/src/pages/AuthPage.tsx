@@ -7,6 +7,7 @@ import { PageMeta } from '../components/seo'
 import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 import { friendlyAuthErrorMessage } from '../lib/userFacingErrors'
 import { showEtherToast } from '../lib/etherToast'
+import { useAppStore } from '../stores/useAppStore'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useToastStore } from '../stores/useToastStore'
 
@@ -29,6 +30,8 @@ export function AuthPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const pushToast = useToastStore((s) => s.pushToast)
+  const language = useAppStore((s) => s.language)
+  const isVi = language === 'vi'
   const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
 
   useEffect(() => {
@@ -72,7 +75,7 @@ export function AuthPage() {
     <div className="relative h-screen overflow-hidden bg-ds-bg">
       <PageMeta
         path="/login"
-        title="Sign in"
+        title={isVi ? 'Đăng nhập' : 'Sign in'}
         description="EtherAI: đăng nhập để đồng bộ roadmap video-to-knowledge; hệ thống tự phân tích video, tạo mindmap và deep time-linking."
         noindex
       />
@@ -96,7 +99,7 @@ export function AuthPage() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.35 }}
           className="relative hidden w-full flex-1 overflow-hidden md:flex md:w-1/2 md:flex-none"
-          aria-label="Value proposition"
+          aria-label={isVi ? 'Giới thiệu giá trị' : 'Value proposition'}
         >
           <div className="absolute inset-0">
             <div className="absolute inset-0 ds-surface-glass" />
@@ -131,7 +134,7 @@ export function AuthPage() {
                 onClick={() => setLearnMoreOpen(true)}
                 className="ds-interactive inline-flex items-center gap-2 rounded-ds-sm border border-ds-border bg-ds-bg/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-ds-text-secondary hover:border-ds-primary/40 hover:text-ds-text-primary"
               >
-                Learn more
+                {isVi ? 'Tìm hiểu thêm' : 'Learn more'}
               </button>
               <span className="text-xs text-ds-text-secondary">Không cần cuộn trang — card đăng nhập luôn sẵn sàng.</span>
             </div>
@@ -143,10 +146,10 @@ export function AuthPage() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.35, delay: 0.03 }}
           className="scrollbar-hide flex w-full min-w-0 flex-1 items-center justify-center overflow-x-hidden overflow-y-auto px-4 py-6 sm:px-6 md:w-1/2 md:flex-none md:px-12 md:py-8"
-          aria-label="Account"
+          aria-label={isVi ? 'Tài khoản' : 'Account'}
         >
           <article className="ds-surface-glass w-full min-w-0 max-w-[min(100%,28rem)] rounded-ds-lg border border-ds-border p-6 shadow-ds-soft backdrop-blur-md sm:p-8 md:backdrop-blur-[10px]">
-            <h2 className="sr-only">Account</h2>
+            <h2 className="sr-only">{isVi ? 'Tài khoản' : 'Account'}</h2>
 
             <div className="mb-6 flex gap-2 rounded-ds-sm bg-ds-bg/60 p-1">
               {(['login', 'signup'] as const).map((m) => (
@@ -160,7 +163,7 @@ export function AuthPage() {
                       : 'text-ds-text-secondary hover:text-ds-text-primary'
                   }`}
                 >
-                  {m}
+                  {isVi ? (m === 'login' ? 'Đăng nhập' : 'Đăng ký') : m}
                 </button>
               ))}
             </div>
@@ -241,13 +244,13 @@ export function AuthPage() {
               {mode === 'signup' && (
                 <div>
                   <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
-                    Display name
+                    {isVi ? 'Tên hiển thị' : 'Display name'}
                   </label>
                   <input
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-ds-base text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
-                    placeholder="Ada Lovelace"
+                    placeholder={isVi ? 'Nguyễn Văn A' : 'Ada Lovelace'}
                     autoComplete="name"
                   />
                 </div>
@@ -263,14 +266,14 @@ export function AuthPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-ds-base text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
-                  placeholder="you@university.edu"
+                  placeholder={isVi ? 'ban@truong.edu.vn' : 'you@university.edu'}
                   autoComplete="email"
                 />
               </div>
 
               <div>
                 <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
-                  Password
+                  {isVi ? 'Mật khẩu' : 'Password'}
                 </label>
                 <input
                   type="password"
@@ -289,7 +292,7 @@ export function AuthPage() {
                 disabled={busy}
                 className="ds-interactive w-full rounded-ds-sm bg-ds-primary py-4 text-sm font-bold text-ds-text-primary shadow-ds-soft hover:opacity-95 disabled:opacity-50"
               >
-                {busy ? 'Đang xử lý…' : mode === 'login' ? 'Sign in' : 'Create account'}
+                {busy ? (isVi ? 'Đang xử lý…' : 'Processing…') : mode === 'login' ? (isVi ? 'Đăng nhập' : 'Sign in') : isVi ? 'Tạo tài khoản' : 'Create account'}
               </button>
             </form>
 
@@ -314,7 +317,7 @@ export function AuthPage() {
           <>
             <motion.button
               type="button"
-              aria-label="Close learn more"
+              aria-label={isVi ? 'Đóng phần tìm hiểu thêm' : 'Close learn more'}
               className="fixed inset-0 z-[500] bg-ds-bg/55 backdrop-blur-sm"
               onClick={() => setLearnMoreOpen(false)}
               initial={{ opacity: 0 }}
@@ -334,14 +337,14 @@ export function AuthPage() {
               <div className="ds-surface-glass w-full max-w-3xl overflow-hidden rounded-ds-lg border border-ds-border shadow-ds-soft backdrop-blur-[10px]">
                 <div className="relative flex items-center justify-between gap-4 border-b border-ds-border px-5 py-4">
                   <div>
-                    <p className="ds-text-label text-ds-secondary">Learn more</p>
+                    <p className="ds-text-label text-ds-secondary">{isVi ? 'Tìm hiểu thêm' : 'Learn more'}</p>
                     <h3 className="mt-1 text-lg font-bold text-ds-text-primary">AI Video-to-Knowledge Roadmap</h3>
                   </div>
                   <button
                     type="button"
                     onClick={() => setLearnMoreOpen(false)}
                     className="ds-interactive-icon absolute right-4 top-3 flex h-9 w-9 items-center justify-center rounded-ds-sm border border-ds-border bg-ds-bg/70 text-ds-text-primary shadow-ds-soft hover:bg-ds-border/30"
-                    aria-label="Close"
+                    aria-label={isVi ? 'Đóng' : 'Close'}
                   >
                     <span className="text-sm font-bold leading-none">X</span>
                   </button>

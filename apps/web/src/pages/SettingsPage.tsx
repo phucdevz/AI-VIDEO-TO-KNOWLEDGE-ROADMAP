@@ -126,6 +126,7 @@ export function SettingsPage() {
   const quizDifficulty = useAppStore((s) => s.quizDifficulty)
   const uiTheme = useAppStore((s) => s.uiTheme)
   const language = useAppStore((s) => s.language)
+  const isVi = language === 'vi'
   const groqApiKey = useAppStore((s) => s.groqApiKey)
   const googleApiKey = useAppStore((s) => s.googleApiKey)
   const setSummaryLength = useAppStore((s) => s.setSummaryLength)
@@ -271,12 +272,14 @@ export function SettingsPage() {
     <div className="mx-auto w-full max-w-7xl space-y-8 px-4 py-6 sm:px-6 lg:px-8 md:py-8">
       <PageMeta
         path="/settings"
-        title="Settings"
-        description="Cài đặt hồ sơ, tuỳ chọn tóm tắt/quiz và cách kết nối AI."
+        title={isVi ? 'Cài đặt' : 'Settings'}
+        description={isVi ? 'Cài đặt hồ sơ, tuỳ chọn tóm tắt/quiz và cách kết nối AI.' : 'Profile, learning preferences, and AI connection settings.'}
       />
       <header>
-        <h2 className="text-3xl font-bold text-ds-text-primary">Settings</h2>
-        <p className="ds-text-body-secondary mt-2">Tùy chỉnh hồ sơ và tuỳ chọn học tập theo ý bạn.</p>
+        <h2 className="text-3xl font-bold text-ds-text-primary">{isVi ? 'Cài đặt' : 'Settings'}</h2>
+        <p className="ds-text-body-secondary mt-2">
+          {isVi ? 'Tùy chỉnh hồ sơ và tuỳ chọn học tập theo ý bạn.' : 'Customize your profile and learning preferences.'}
+        </p>
       </header>
 
       {user && !prefsTableReady && (
@@ -295,12 +298,12 @@ export function SettingsPage() {
       <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px]">
         <div className="mb-6 flex items-center gap-3">
           <User className="h-6 w-6 text-ds-secondary" strokeWidth={1.5} />
-          <h3 className="text-lg font-bold text-ds-text-primary">Profile</h3>
+          <h3 className="text-lg font-bold text-ds-text-primary">{isVi ? 'Hồ sơ' : 'Profile'}</h3>
         </div>
         <div className="grid gap-6 md:grid-cols-2">
           <div>
             <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
-              Display name
+              {isVi ? 'Tên hiển thị' : 'Display name'}
             </label>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
               <input
@@ -341,7 +344,7 @@ export function SettingsPage() {
       <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px]">
         <div className="mb-6 flex items-center gap-3">
           <Sliders className="h-6 w-6 text-ds-secondary" strokeWidth={1.5} />
-          <h3 className="text-lg font-bold text-ds-text-primary">AI & UI preferences</h3>
+          <h3 className="text-lg font-bold text-ds-text-primary">{isVi ? 'Tùy chọn AI & giao diện' : 'AI & UI preferences'}</h3>
         </div>
         <div className="grid gap-8 md:grid-cols-2">
           <div className="relative z-10 min-w-0">
@@ -350,7 +353,7 @@ export function SettingsPage() {
               htmlFor={languageFieldId}
               className="mb-4 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary"
             >
-              Language
+              {isVi ? 'Ngôn ngữ' : 'Language'}
             </label>
             <div className="max-w-sm">
               <LanguageSelect
@@ -367,7 +370,7 @@ export function SettingsPage() {
           </div>
           <div>
             <p className="mb-4 text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
-              Summary length
+              {isVi ? 'Độ dài tóm tắt' : 'Summary length'}
             </p>
             <div className="flex flex-wrap gap-2">
               {(['short', 'medium', 'long'] as const).map((v) => (
@@ -385,14 +388,20 @@ export function SettingsPage() {
                       : 'border border-ds-border text-ds-text-secondary hover:bg-ds-border/30'
                   }`}
                 >
-                  {v}
+                  {isVi
+                    ? v === 'short'
+                      ? 'Ngắn'
+                      : v === 'medium'
+                        ? 'Vừa'
+                        : 'Dài'
+                    : v}
                 </button>
               ))}
             </div>
           </div>
           <div>
             <p className="mb-4 text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
-              Quiz difficulty
+              {isVi ? 'Độ khó quiz' : 'Quiz difficulty'}
             </p>
             <div className="flex flex-wrap gap-2">
               {(['easy', 'medium', 'hard'] as const).map((v) => (
@@ -410,13 +419,19 @@ export function SettingsPage() {
                       : 'border border-ds-border text-ds-text-secondary hover:bg-ds-border/30'
                   }`}
                 >
-                  {v}
+                  {isVi
+                    ? v === 'easy'
+                      ? 'Dễ'
+                      : v === 'medium'
+                        ? 'Vừa'
+                        : 'Khó'
+                    : v}
                 </button>
               ))}
             </div>
           </div>
           <div className="md:col-span-2">
-            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-ds-text-secondary">UI theme</p>
+            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-ds-text-secondary">{isVi ? 'Giao diện' : 'UI theme'}</p>
             <div className="flex flex-wrap gap-2">
               {(['dark', 'light'] as const).map((t) => (
                 <button
@@ -433,11 +448,13 @@ export function SettingsPage() {
                       : 'border border-ds-border text-ds-text-secondary hover:bg-ds-border/30'
                   }`}
                 >
-                  {t}
+                  {isVi ? (t === 'dark' ? 'Tối' : 'Sáng') : t}
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-xs text-ds-text-secondary">Bạn có thể đổi theme giao diện bất cứ lúc nào.</p>
+            <p className="mt-2 text-xs text-ds-text-secondary">
+              {isVi ? 'Bạn có thể đổi theme giao diện bất cứ lúc nào.' : 'You can switch themes at any time.'}
+            </p>
           </div>
         </div>
       </section>
@@ -445,7 +462,7 @@ export function SettingsPage() {
       <section className="ds-surface-glass rounded-ds-lg border border-ds-border p-8 shadow-ds-soft backdrop-blur-[10px]">
         <div className="mb-6 flex items-center gap-3">
           <KeyRound className="h-6 w-6 text-ds-secondary" strokeWidth={1.5} />
-          <h3 className="text-lg font-bold text-ds-text-primary">API keys</h3>
+          <h3 className="text-lg font-bold text-ds-text-primary">{isVi ? 'Khóa API' : 'API keys'}</h3>
         </div>
         <p className="mb-6 text-sm text-ds-text-secondary">
           Được lưu cục bộ trên trình duyệt; khi đồng bộ đám mây đã bật, khóa sẽ được mã hóa đồng bộ theo tài khoản.
@@ -453,7 +470,7 @@ export function SettingsPage() {
         <div className="space-y-4">
           <div>
             <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-ds-text-secondary">
-              Groq API key
+              {isVi ? 'Groq API key' : 'Groq API key'}
             </label>
             <input
               type="password"

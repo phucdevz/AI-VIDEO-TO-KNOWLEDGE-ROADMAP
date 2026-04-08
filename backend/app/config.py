@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     groq_api_key: str | None = None
+    groq_chat_api_key: str | None = None
+    groq_whisper_api_key: str | None = None
     google_api_key: str | None = None
     supabase_url: str | None = None
     supabase_key: str | None = None
@@ -33,6 +35,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def effective_groq_chat_key(self) -> str | None:
+        return (self.groq_chat_api_key or self.groq_api_key or None)
+
+    @property
+    def effective_groq_whisper_key(self) -> str | None:
+        return (self.groq_whisper_api_key or self.groq_api_key or None)
 
 
 @lru_cache

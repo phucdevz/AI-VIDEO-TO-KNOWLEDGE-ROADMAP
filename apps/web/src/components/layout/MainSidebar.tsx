@@ -19,7 +19,14 @@ const ICON_STROKE = 1.5 as const
 
 type NavDef = { to: string; label: string; icon: LucideIcon; end?: boolean }
 
-const NAV_ITEMS: NavDef[] = [
+const NAV_ITEMS_VI: NavDef[] = [
+  { to: '/dashboard', label: 'Bảng điều khiển', icon: LayoutDashboard, end: true },
+  { to: '/workspace', label: 'Không gian học', icon: Clapperboard },
+  { to: '/quiz', label: 'Quiz', icon: ClipboardList },
+  { to: '/analytics', label: 'Phân tích', icon: BarChart3 },
+  { to: '/settings', label: 'Cài đặt', icon: Settings },
+]
+const NAV_ITEMS_EN: NavDef[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/workspace', label: 'Workspace', icon: Clapperboard },
   { to: '/quiz', label: 'Quiz', icon: ClipboardList },
@@ -30,13 +37,16 @@ const NAV_ITEMS: NavDef[] = [
 export function MainSidebar() {
   const { sidebarCollapsed, toggleSidebarCollapsed } = useShell()
   const user = useAuthStore((s) => s.user)
+  const language = useAppStore((s) => s.language)
+  const isVi = language === 'vi'
+  const navItems = isVi ? NAV_ITEMS_VI : NAV_ITEMS_EN
   const signOut = useAuthStore((s) => s.signOut)
   const unbindLibrary = useAppStore((s) => s.unbindLibraryRealtime)
   const navigate = useNavigate()
 
   const meta = user?.user_metadata as { full_name?: string; display_name?: string; avatar_url?: string } | undefined
   const appMeta = user?.app_metadata as { full_name?: string; avatar_url?: string } | undefined
-  const displayName = meta?.full_name ?? meta?.display_name ?? appMeta?.full_name ?? user?.email ?? 'Guest'
+  const displayName = meta?.full_name ?? meta?.display_name ?? appMeta?.full_name ?? user?.email ?? (isVi ? 'Khách' : 'Guest')
   const email = user?.email ?? ''
   const avatarUrl = meta?.avatar_url ?? appMeta?.avatar_url
   const initials = displayName
@@ -57,7 +67,7 @@ export function MainSidebar() {
         'md:w-16',
         sidebarCollapsed ? 'lg:w-16' : 'lg:w-64',
       ].join(' ')}
-      aria-label="Main navigation"
+      aria-label={isVi ? 'Điều hướng chính' : 'Main navigation'}
     >
       <button
         type="button"
@@ -101,7 +111,7 @@ export function MainSidebar() {
                 sidebarCollapsed ? 'lg:sr-only' : 'lg:not-sr-only'
               }`}
             >
-              Video → Knowledge
+              {isVi ? 'Video → Tri thức' : 'Video → Knowledge'}
             </p>
           </div>
         </div>
@@ -116,7 +126,7 @@ export function MainSidebar() {
           ].join(' ')}
           role="navigation"
         >
-          {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
+          {navItems.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to + label}
               to={to}
@@ -175,14 +185,14 @@ export function MainSidebar() {
           </div>
           <button
             type="button"
-            title="Sign out"
+            title={isVi ? 'Đăng xuất' : 'Sign out'}
             onClick={async () => {
               unbindLibrary()
               await signOut()
               navigate('/login', { replace: true })
             }}
             className="ds-interactive-icon rounded-ds-sm p-2 text-ds-text-secondary hover:bg-ds-border/30 hover:text-ds-secondary md:mx-auto lg:mx-0"
-            aria-label="Sign out"
+            aria-label={isVi ? 'Đăng xuất' : 'Sign out'}
           >
             <LogOut className="h-6 w-6" strokeWidth={ICON_STROKE} />
           </button>

@@ -9,6 +9,8 @@ from app.config import get_settings
 
 _ENV_KEYS = (
     "GROQ_API_KEY",
+    "GROQ_CHAT_API_KEY",
+    "GROQ_WHISPER_API_KEY",
     "GOOGLE_API_KEY",
     "SUPABASE_URL",
     "SUPABASE_KEY",

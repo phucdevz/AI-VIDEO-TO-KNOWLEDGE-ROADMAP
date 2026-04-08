@@ -159,6 +159,7 @@ export function WorkspacePage() {
   const authUser = useAuthStore((s) => s.user)
   const language = useAppStore((s) => s.language)
   const quizDifficulty = useAppStore((s) => s.quizDifficulty)
+  const isVi = language === 'vi'
 
   const knowledgePackCtx = useMemo(
     () => ({
@@ -339,7 +340,7 @@ export function WorkspacePage() {
   return (
     <>
       <PageMeta
-        title="Workspace"
+        title={isVi ? 'Không gian học' : 'Workspace'}
         description={metaDesc}
         path={metaPath}
         documentTitle={docTitle}
@@ -434,7 +435,7 @@ export function WorkspacePage() {
                   }`}
                 >
                   <Focus className="h-4 w-4" strokeWidth={1.5} aria-hidden />
-                  Focus
+                  {isVi ? 'Tập trung' : 'Focus'}
                 </button>
               </div>
 
@@ -446,7 +447,7 @@ export function WorkspacePage() {
               />
               {stickyMini && (
                 <span className="text-[11px] font-normal text-ds-text-secondary max-sm:hidden md:inline">
-                  Mini-player: cuộn lên để xem trong cột
+                  {isVi ? 'Mini-player: cuộn lên để xem trong cột' : 'Mini-player: scroll up to view in column'}
                 </span>
               )}
               {knowledgeProcessing && (
@@ -476,7 +477,7 @@ export function WorkspacePage() {
               }`}
             >
               <Map className="h-5 w-5 shrink-0" strokeWidth={1.5} aria-hidden />
-              Mindmap
+              {isVi ? 'Sơ đồ tư duy' : 'Mindmap'}
             </button>
             <button
               type="button"
@@ -490,7 +491,7 @@ export function WorkspacePage() {
               }`}
             >
               <MessageSquare className="h-5 w-5 shrink-0" strokeWidth={1.5} aria-hidden />
-              AI Tutor
+              {isVi ? 'Trợ giảng AI' : 'AI Tutor'}
             </button>
           </div>
         )}

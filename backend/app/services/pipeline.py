@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
+import uuid
 from collections.abc import Callable
 
 from app.config import get_settings
@@ -55,6 +57,29 @@ def _emit_metrics(on_metrics: Callable[[dict[str, object]], None] | None, payloa
         on_metrics(payload)
 
 
+def _log_stage_start(request_id: str, stage: str, **extra: object) -> float:
+    t0 = time.perf_counter()
+    logger.info(
+        "pipeline_stage_start request_id=%s stage=%s detail=%s",
+        request_id,
+        stage,
+        extra if extra else {},
+    )
+    return t0
+
+
+def _log_stage_end(request_id: str, stage: str, t0: float, *, status: str = "ok", **extra: object) -> None:
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    logger.info(
+        "pipeline_stage_end request_id=%s stage=%s status=%s latency_ms=%.2f detail=%s",
+        request_id,
+        stage,
+        status,
+        elapsed_ms,
+        extra if extra else {},
+    )
+
+
 def _response_from_cached_row(url: str, row: dict) -> AudioExtractionResponse:
     transcript = row.get("transcript") if isinstance(row.get("transcript"), dict) else {}
     flow_data = row.get("flow_data") if isinstance(row.get("flow_data"), dict) else {"nodes": [], "edges": []}
@@ -81,6 +106,42 @@ def _response_from_cached_row(url: str, row: dict) -> AudioExtractionResponse:
         lecture_id=str(row.get("id")) if row.get("id") is not None else None,
         persist_message="Loaded from Supabase cache",
     )
+
+
+def _assert_react_flow_contract(flow: dict) -> None:
+    """Shape-level contract check (must not change mindmap structure contract)."""
+    if not isinstance(flow, dict):
+        raise PipelineError("react_flow must be an object")
+    nodes = flow.get("nodes")
+    edges = flow.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        raise PipelineError("react_flow.nodes and react_flow.edges must be arrays")
+    for i, n in enumerate(nodes):
+        if not isinstance(n, dict):
+            raise PipelineError(f"react_flow.nodes[{i}] must be an object")
+        if not isinstance(n.get("id"), str) or not n.get("id"):
+            raise PipelineError(f"react_flow.nodes[{i}].id must be a non-empty string")
+        if n.get("type") != "neural":
+            raise PipelineError(f'react_flow.nodes[{i}].type must be "neural"')
+        pos = n.get("position")
+        if not isinstance(pos, dict) or "x" not in pos or "y" not in pos:
+            raise PipelineError(f"react_flow.nodes[{i}].position must include x/y")
+        data = n.get("data")
+        if not isinstance(data, dict):
+            raise PipelineError(f"react_flow.nodes[{i}].data must be an object")
+        if "timestamp" not in data:
+            raise PipelineError(f"react_flow.nodes[{i}].data.timestamp is required")
+    for i, e in enumerate(edges):
+        if not isinstance(e, dict):
+            raise PipelineError(f"react_flow.edges[{i}] must be an object")
+        if not isinstance(e.get("id"), str) or not e.get("id"):
+            raise PipelineError(f"react_flow.edges[{i}].id must be a non-empty string")
+        if not isinstance(e.get("source"), str) or not e.get("source"):
+            raise PipelineError(f"react_flow.edges[{i}].source must be a non-empty string")
+        if not isinstance(e.get("target"), str) or not e.get("target"):
+            raise PipelineError(f"react_flow.edges[{i}].target must be a non-empty string")
+        if e.get("type") != "neuralFlow":
+            raise PipelineError(f'react_flow.edges[{i}].type must be "neuralFlow"')
 
 
 def _ensure_key_points_cover_full_video(tutor: dict, *, segments: list[dict], duration: float | None) -> dict:
@@ -178,47 +239,74 @@ async def run_full_extraction_pipeline_with_progress(
     on_metrics: Callable[[dict[str, object]], None] | None = None,
 ) -> AudioExtractionResponse:
     """Extract → transcribe → chunk → Gemini → optional Supabase save with stage callback."""
+    request_id = str(uuid.uuid4())
     settings = get_settings()
     db_svc = DatabaseService(settings.supabase_url, settings.supabase_key)
     t_pipeline0 = time.perf_counter()
+    logger.info(
+        "pipeline_request_start request_id=%s source_url=%s user_id=%s force=%s target_lang=%s quiz_difficulty=%s",
+        request_id,
+        url,
+        user_id,
+        force,
+        target_lang,
+        quiz_difficulty,
+    )
 
     # Cache-first: avoid touching AI providers if we already have data.
     if not force:
         _emit(on_stage, "Checking cache...")
+        t_cache = _log_stage_start(request_id, "cache_lookup")
         lookup = await asyncio.to_thread(db_svc.find_lecture_by_source_url, url)
+        _log_stage_end(request_id, "cache_lookup", t_cache, found=lookup.found)
         if lookup.found and lookup.row:
             _emit(on_stage, "Cache hit. Returning stored result.")
+            logger.info("pipeline_cache_hit request_id=%s", request_id)
             return _response_from_cached_row(url, lookup.row)
     else:
         _emit(on_stage, "Force regenerate (bypass cache)...")
+        logger.info("pipeline_force_bypass_cache request_id=%s", request_id)
 
     # Per-user API keys override (loaded from Supabase) when `user_id` provided.
-    groq_key = settings.groq_api_key or ""
+    groq_chat_key = settings.effective_groq_chat_key or ""
+    groq_whisper_key = settings.effective_groq_whisper_key or ""
     google_key = settings.google_api_key or ""
     if db_svc.is_configured and user_id:
         u_groq, u_google = await asyncio.to_thread(db_svc.get_user_api_keys, user_id)
         if u_groq:
-            groq_key = u_groq
+            # User-level Groq key overrides both chat+whisper for this request.
+            groq_chat_key = u_groq
+            groq_whisper_key = u_groq
         if u_google:
             google_key = u_google
 
     audio_svc = AudioExtractionService(settings.temp_audio_dir)
-    transcribe_svc = TranscriptionService(groq_key or "")
+    transcribe_svc = TranscriptionService(groq_whisper_key or "")
     ai_svc = AIService(
         google_key,
-        groq_api_key=groq_key,
+        groq_api_key=groq_chat_key,
         provider=settings.ai_provider,
     )
 
     _emit(on_stage, "Downloading...")
+    t_extract = _log_stage_start(request_id, "audio_extract")
     try:
         extract_result = await asyncio.to_thread(audio_svc.extract, url)
+        _log_stage_end(
+            request_id,
+            "audio_extract",
+            t_extract,
+            video_id=extract_result.video_id,
+            title=extract_result.title,
+        )
     except AudioExtractionError as e:
+        _log_stage_end(request_id, "audio_extract", t_extract, status="error", error_type=type(e).__name__)
         raise PipelineClientError(str(e)) from e
 
     placeholder_id: str | None = None
     if db_svc.is_configured:
         _emit(on_stage, "Registering lecture (processing)…")
+        t_placeholder = _log_stage_start(request_id, "persist_placeholder")
         ph = await asyncio.to_thread(
             db_svc.upsert_processing_placeholder,
             video_id=extract_result.video_id,
@@ -231,13 +319,32 @@ async def run_full_extraction_pipeline_with_progress(
             _emit(on_stage, f"Realtime: lecture id {placeholder_id} (processing)")
         elif ph.message:
             logger.warning("Processing placeholder not saved: %s", ph.message)
+        _log_stage_end(
+            request_id,
+            "persist_placeholder",
+            t_placeholder,
+            status="ok" if ph.ok else "warning",
+            lecture_id=ph.lecture_id,
+            message=ph.message,
+        )
 
     _emit(on_stage, "Transcribing...")
+    t_transcribe = _log_stage_start(request_id, "transcribe")
     try:
         tr = await asyncio.to_thread(transcribe_svc.transcribe_file, extract_result.audio_path)
+        _log_stage_end(
+            request_id,
+            "transcribe",
+            t_transcribe,
+            language=tr.language,
+            duration=tr.duration,
+            segments=len(tr.segments),
+        )
     except TranscriptionError as e:
+        _log_stage_end(request_id, "transcribe", t_transcribe, status="error", error_type=type(e).__name__)
         raise PipelineError(str(e)) from e
 
+    t_chunk = _log_stage_start(request_id, "semantic_chunk")
     chunks = semantic_chunk_transcript(tr.segments)
     chunk_schemas = [
         KnowledgeChunkSchema(
@@ -248,8 +355,10 @@ async def run_full_extraction_pipeline_with_progress(
         )
         for c in chunks
     ]
+    _log_stage_end(request_id, "semantic_chunk", t_chunk, chunk_count=len(chunk_schemas))
 
     _emit(on_stage, "Generating Map...")
+    t_ai = _log_stage_start(request_id, "ai_generate")
     try:
         knowledge = await asyncio.to_thread(
             ai_svc.generate_from_transcript,
@@ -258,10 +367,20 @@ async def run_full_extraction_pipeline_with_progress(
             target_lang=target_lang,
             quiz_difficulty=quiz_difficulty,
         )
+        _log_stage_end(
+            request_id,
+            "ai_generate",
+            t_ai,
+            provider=knowledge.provider_used,
+            confidence=knowledge.confidence,
+            refined=knowledge.refined,
+        )
     except KnowledgeGenerationError as e:
+        _log_stage_end(request_id, "ai_generate", t_ai, status="error", error_type=type(e).__name__)
         raise PipelineError(str(e)) from e
 
     seg_dicts = [{"start": s.start, "end": s.end, "text": s.text} for s in tr.segments]
+    react_flow_before_guards = copy.deepcopy(knowledge.react_flow)
     try:
         knowledge.react_flow = ensure_react_flow_timeline_coverage(
             knowledge.react_flow,
@@ -275,6 +394,17 @@ async def run_full_extraction_pipeline_with_progress(
         knowledge.react_flow = normalize_react_flow_labels(knowledge.react_flow)
     except Exception:
         logger.exception("normalize_react_flow_labels failed; using react_flow as-is")
+
+    try:
+        _assert_react_flow_contract(knowledge.react_flow)
+    except Exception as e:
+        logger.warning(
+            "react_flow_contract_regression request_id=%s error=%s; restoring pre-guard flow",
+            request_id,
+            e,
+        )
+        knowledge.react_flow = react_flow_before_guards
+        _assert_react_flow_contract(knowledge.react_flow)
 
     # Guardrail: ensure tutor key points cover full video, especially for long lectures.
     try:
@@ -297,6 +427,7 @@ async def run_full_extraction_pipeline_with_progress(
     transcript_for_db = {k: v for k, v in transcription_payload.items() if k != "verbose"}
 
     _emit(on_stage, "Saving to Cloud...")
+    t_persist = _log_stage_start(request_id, "persist_pipeline")
     persist = await asyncio.to_thread(
         db_svc.save_lecture_pipeline,
         video_id=extract_result.video_id,
@@ -308,6 +439,14 @@ async def run_full_extraction_pipeline_with_progress(
         tutor_data=knowledge.tutor,
         knowledge_chunks=[c.model_dump() for c in chunk_schemas],
         user_id=user_id,
+    )
+    _log_stage_end(
+        request_id,
+        "persist_pipeline",
+        t_persist,
+        status="ok" if persist.ok else "warning",
+        lecture_id=persist.lecture_id,
+        message=persist.message,
     )
 
     if not persist.ok:
@@ -333,6 +472,7 @@ async def run_full_extraction_pipeline_with_progress(
         {
             "event": "pipeline_complete",
             **pipeline_metrics.model_dump(),
+            "request_id": request_id,
             "lecture_id": resolved_lecture_id,
             "persisted": persist.ok,
         },
@@ -352,6 +492,7 @@ async def run_full_extraction_pipeline_with_progress(
         "accuracy_k": am2.get("keyword_f1_k"),
         "refined": knowledge.refined,
         "detail": {
+            "request_id": request_id,
             "persisted": persist.ok,
             "persist_message": persist.message,
             "user_id": user_id,
@@ -359,6 +500,13 @@ async def run_full_extraction_pipeline_with_progress(
     }
     await asyncio.to_thread(db_svc.insert_system_log, log_row)
 
+    logger.info(
+        "pipeline_request_end request_id=%s status=ok latency_ms=%.2f provider=%s lecture_id=%s",
+        request_id,
+        latency_ms,
+        knowledge.provider_used,
+        resolved_lecture_id,
+    )
     return AudioExtractionResponse(
         video_id=extract_result.video_id,
         title=extract_result.title,

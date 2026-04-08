@@ -45,7 +45,7 @@ class TranscriptionService:
 
     def __init__(self, api_key: str) -> None:
         if not api_key or not api_key.strip():
-            raise TranscriptionError("GROQ_API_KEY is not set")
+            raise TranscriptionError("GROQ whisper API key is not set (GROQ_WHISPER_API_KEY or GROQ_API_KEY)")
         self._client = Groq(api_key=api_key.strip())
 
     def transcribe_file(self, audio_path: Path) -> TranscriptionResult:

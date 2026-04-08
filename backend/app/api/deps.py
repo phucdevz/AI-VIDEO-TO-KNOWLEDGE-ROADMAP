@@ -23,14 +23,14 @@ def get_audio_extraction_service(
 def get_transcription_service(
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> TranscriptionService:
-    key = settings.groq_api_key or ""
+    key = settings.effective_groq_whisper_key or ""
     return TranscriptionService(api_key=key)
 
 
 def get_ai_service(
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> AIService:
-    return AIService(api_key=settings.google_api_key, groq_api_key=settings.groq_api_key)
+    return AIService(api_key=settings.google_api_key, groq_api_key=settings.effective_groq_chat_key)
 
 
 def get_database_service(

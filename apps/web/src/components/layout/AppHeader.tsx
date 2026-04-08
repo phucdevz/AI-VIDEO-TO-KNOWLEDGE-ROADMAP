@@ -4,7 +4,14 @@ import { AvatarWithNotificationBell } from './AvatarWithNotificationBell'
 import { useAppStore } from '../../stores/useAppStore'
 import { useAuthStore } from '../../stores/useAuthStore'
 
-const TITLES: Record<string, string> = {
+const TITLES_VI: Record<string, string> = {
+  '/dashboard': 'Thư viện',
+  '/workspace': 'Không gian học',
+  '/quiz': 'Trung tâm Quiz',
+  '/analytics': 'Phân tích',
+  '/settings': 'Cài đặt',
+}
+const TITLES_EN: Record<string, string> = {
   '/dashboard': 'Library',
   '/workspace': 'Workspace',
   '/quiz': 'Quiz Center',
@@ -12,7 +19,7 @@ const TITLES: Record<string, string> = {
   '/settings': 'Settings',
 }
 
-function SearchField({ className }: { className?: string }) {
+function SearchField({ className, isVi }: { className?: string; isVi: boolean }) {
   return (
     <div className={`relative w-full min-w-0 ${className ?? ''}`}>
       <Search
@@ -22,9 +29,9 @@ function SearchField({ className }: { className?: string }) {
       />
       <input
         type="search"
-        placeholder="Tìm bài giảng, chủ đề…"
+        placeholder={isVi ? 'Tìm bài giảng, chủ đề…' : 'Search lectures, topics…'}
         className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 py-2 pl-10 pr-4 text-base text-ds-text-primary placeholder:text-ds-text-secondary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40 md:text-sm"
-        aria-label="Global search"
+        aria-label={isVi ? 'Tìm kiếm toàn cục' : 'Global search'}
       />
     </div>
   )
@@ -35,14 +42,17 @@ const ICON_STROKE = 1.5 as const
 export function AppHeader() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const title = TITLES[pathname] ?? 'Dashboard'
+  const language = useAppStore((s) => s.language)
+  const isVi = language === 'vi'
+  const titleMap = isVi ? TITLES_VI : TITLES_EN
+  const title = titleMap[pathname] ?? (isVi ? 'Bảng điều khiển' : 'Dashboard')
   const user = useAuthStore((s) => s.user)
   const signOut = useAuthStore((s) => s.signOut)
   const unbindLibrary = useAppStore((s) => s.unbindLibraryRealtime)
 
   const meta = user?.user_metadata as { full_name?: string; display_name?: string; avatar_url?: string } | undefined
   const appMeta = user?.app_metadata as { full_name?: string; avatar_url?: string } | undefined
-  const displayName = meta?.full_name ?? meta?.display_name ?? appMeta?.full_name ?? user?.email ?? 'Guest'
+  const displayName = meta?.full_name ?? meta?.display_name ?? appMeta?.full_name ?? user?.email ?? (isVi ? 'Khách' : 'Guest')
   const avatarUrl = meta?.avatar_url ?? appMeta?.avatar_url
   const initials = displayName
     .split(/\s+/)
@@ -86,7 +96,7 @@ export function AppHeader() {
           </div>
         </div>
 
-        <SearchField className="md:order-2 md:max-w-lg md:flex-1 lg:max-w-xl" />
+        <SearchField className="md:order-2 md:max-w-lg md:flex-1 lg:max-w-xl" isVi={isVi} />
       </div>
     </header>
   )

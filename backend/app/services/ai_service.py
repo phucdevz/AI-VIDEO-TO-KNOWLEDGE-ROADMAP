@@ -323,6 +323,13 @@ GEMINI_MODELS = (
     "gemini-2.0-flash-lite",
 )
 _BACKOFF_SECONDS = (2, 4, 8)
+_MAX_JSON_REPAIR_ATTEMPTS = 1
+_MAX_SCHEMA_REPAIR_ATTEMPTS = 1
+_MAX_REPAIR_PAYLOAD_CHARS = 32000
+_MIN_DETAIL_CHILDREN_PER_MAIN = 2
+_MAX_PROVIDER_ATTEMPT_SECONDS = 75.0
+_GROQ_RATE_LIMIT_STREAK_FOR_COOLDOWN = 3
+_GROQ_COOLDOWN_SECONDS = 90.0
 
 
 def _groq_completion_confidence(completion: object) -> float | None:
@@ -485,34 +492,19 @@ def _ensure_main_branch_detail_children(react_flow: dict[str, Any]) -> dict[str,
 
     for mid in mains:
         kids = out_adj.get(mid, [])
-        has_detail = False
+        detail_count = 0
         for kid in kids:
             kn = node_by_id.get(kid)
             if not isinstance(kn, dict):
                 continue
             data = kn.get("data")
             if isinstance(data, dict) and data.get("role") == "detail":
-                has_detail = True
-                break
-        if has_detail:
+                detail_count += 1
+        if detail_count >= _MIN_DETAIL_CHILDREN_PER_MAIN:
             continue
 
-        # Prefer marking an existing child as a detail node.
-        if kids:
-            first_kid = node_by_id.get(kids[0])
-            if isinstance(first_kid, dict):
-                data = first_kid.get("data")
-                if not isinstance(data, dict):
-                    data = {}
-                    first_kid["data"] = data
-                data["role"] = "detail"
-                label = str(data.get("label", "") or "").strip() or "Chi tiet"
-                data["label"] = label[:44]
-                if "highlight" in data and isinstance(data.get("highlight"), str):
-                    data["highlight"] = str(data.get("highlight") or "")[:120]
-                continue
-
-        # If no children, append a small synthetic detail child.
+        # Append synthetic detail children until each main has enough supporting details.
+        # Do not convert existing children: that can collapse the map into a single-looking chain.
         parent = node_by_id.get(mid) or {}
         parent_data = parent.get("data") if isinstance(parent.get("data"), dict) else {}
         parent_pos = parent.get("position") if isinstance(parent.get("position"), dict) else {}
@@ -529,36 +521,216 @@ def _ensure_main_branch_detail_children(react_flow: dict[str, Any]) -> dict[str,
         base_label = f"{parent_label} chi tiet".strip() if parent_label else "Chi tiet"
         base_label = base_label[:44] or "Chi tiet"
 
-        detail_id_base = f"{mid}_detail"
-        detail_id = detail_id_base
-        c = 2
-        while detail_id in all_ids:
-            detail_id = f"{detail_id_base}_{c}"
-            c += 1
-        all_ids.add(detail_id)
-
-        detail_node = {
-            "id": detail_id,
-            "type": "neural",
-            "position": {"x": px + 180.0, "y": py + 110.0},
-            "data": {"label": base_label, "timestamp": pts, "role": "detail", "highlight": ""},
-        }
-        nodes.append(detail_node)
-        node_by_id[detail_id] = detail_node
-        out_adj.setdefault(mid, []).append(detail_id)
-        in_deg[detail_id] = 1
-
-        edge_id = _mk_unique_edge_id(f"e_{mid}_{detail_id}")
-        edges.append(
-            {
-                "id": edge_id,
-                "source": mid,
-                "target": detail_id,
-                "type": "neuralFlow",
+        need = max(0, _MIN_DETAIL_CHILDREN_PER_MAIN - detail_count)
+        for i in range(need):
+            detail_id_base = f"{mid}_detail"
+            detail_id = detail_id_base
+            c = 2
+            while detail_id in all_ids:
+                detail_id = f"{detail_id_base}_{c}"
+                c += 1
+            all_ids.add(detail_id)
+            y_off = 80.0 + (i * 70.0)
+            detail_label = base_label if i == 0 else f"{base_label[:36]} {i+1}".strip()[:44]
+            detail_node = {
+                "id": detail_id,
+                "type": "neural",
+                "position": {"x": px + 180.0, "y": py + y_off},
+                "data": {"label": detail_label, "timestamp": pts, "role": "detail", "highlight": ""},
             }
-        )
+            nodes.append(detail_node)
+            node_by_id[detail_id] = detail_node
+            out_adj.setdefault(mid, []).append(detail_id)
+            in_deg[detail_id] = 1
+
+            edge_id = _mk_unique_edge_id(f"e_{mid}_{detail_id}")
+            edges.append(
+                {
+                    "id": edge_id,
+                    "source": mid,
+                    "target": detail_id,
+                    "type": "neuralFlow",
+                }
+            )
 
     return react_flow
+
+
+def _minimal_quiz_from_tutor(tutor: dict[str, Any] | None) -> dict[str, Any]:
+    kp: list[str] = []
+    if isinstance(tutor, dict):
+        arr = tutor.get("key_points")
+        if isinstance(arr, list):
+            for item in arr:
+                if not isinstance(item, dict):
+                    continue
+                t = str(item.get("text") or "").strip()
+                if t:
+                    kp.append(t)
+    while len(kp) < 3:
+        kp.append(f"Nội dung trọng tâm {len(kp) + 1}")
+    questions: list[dict[str, Any]] = []
+    for i, text in enumerate(kp[:3]):
+        questions.append(
+            {
+                "question": f"Ý nào đúng với trọng tâm sau: {text[:120]}?",
+                "choices": [
+                    text[:140],
+                    f"Phủ định của: {text[:80]}",
+                    "Không liên quan nội dung bài",
+                    "Thông tin chưa được nhắc tới",
+                ],
+                "correct_index": 0,
+                "explanation": "Đáp án đúng bám theo key point trong bài giảng.",
+            }
+        )
+    return {"title": "Quick Check", "questions": questions}
+
+
+def _minimal_tutor_from_flow(flow: dict[str, Any] | None) -> dict[str, Any]:
+    labels: list[tuple[float, str]] = []
+    if isinstance(flow, dict):
+        nodes = flow.get("nodes")
+        if isinstance(nodes, list):
+            for n in nodes:
+                if not isinstance(n, dict):
+                    continue
+                data = n.get("data")
+                if not isinstance(data, dict):
+                    continue
+                label = str(data.get("label") or "").strip()
+                if not label:
+                    continue
+                try:
+                    ts = float(data.get("timestamp", 0) or 0)
+                except Exception:
+                    ts = 0.0
+                labels.append((ts, label))
+    labels.sort(key=lambda x: x[0])
+    points = [{"text": t, "timestamp_seconds": ts} for ts, t in labels[:8]]
+    if len(points) < 3:
+        points.extend(
+            [
+                {"text": "Tổng quan nội dung chính", "timestamp_seconds": 0.0},
+                {"text": "Các ý cốt lõi trong bài", "timestamp_seconds": 30.0},
+                {"text": "Kết luận và lưu ý", "timestamp_seconds": 60.0},
+            ][: 3 - len(points)]
+        )
+    return {
+        "summary": "Tóm tắt tự động từ cấu trúc mindmap khi đầu ra AI thiếu trường tutor.",
+        "key_points": points[:20],
+    }
+
+
+def _coerce_payload_minimal(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Local fail-safe normalization to avoid hard failures when model omits top-level keys.
+    No extra LLM call.
+    """
+    out = dict(payload)
+    rf = out.get("react_flow")
+    quiz = out.get("quiz")
+    tutor = out.get("tutor")
+
+    if not isinstance(rf, dict):
+        # Build a tiny valid graph if missing (keeps contract; downstream guards may enrich).
+        out["react_flow"] = {
+            "nodes": [
+                {
+                    "id": "root",
+                    "type": "neural",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"label": "Tổng quan", "timestamp": 0.0, "highlight": "Nội dung chính của bài."},
+                },
+                {
+                    "id": "root_detail_1",
+                    "type": "neural",
+                    "position": {"x": 180, "y": 100},
+                    "data": {"label": "Chi tiết 1", "timestamp": 20.0, "role": "detail", "highlight": ""},
+                },
+            ],
+            "edges": [{"id": "e_root_d1", "source": "root", "target": "root_detail_1", "type": "neuralFlow"}],
+        }
+        rf = out["react_flow"]
+
+    if not isinstance(tutor, dict):
+        out["tutor"] = _minimal_tutor_from_flow(rf if isinstance(rf, dict) else None)
+        tutor = out["tutor"]
+
+    if not isinstance(quiz, dict):
+        out["quiz"] = _minimal_quiz_from_tutor(tutor if isinstance(tutor, dict) else None)
+        quiz = out["quiz"]
+
+    # If quiz exists but invalid/too short, top-up to minimum 3 questions.
+    if isinstance(quiz, dict):
+        qs = quiz.get("questions")
+        if not isinstance(qs, list):
+            quiz["questions"] = _minimal_quiz_from_tutor(tutor if isinstance(tutor, dict) else None)["questions"]
+        elif len(qs) < 3:
+            extra = _minimal_quiz_from_tutor(tutor if isinstance(tutor, dict) else None)["questions"]
+            quiz["questions"] = (qs + extra)[:3]
+    return out
+
+
+def _nearest_segment_text(segments: list[dict[str, Any]], ts: float) -> str:
+    best = ""
+    best_dist = 1e18
+    for s in segments:
+        if not isinstance(s, dict):
+            continue
+        try:
+            st = float(s.get("start", 0) or 0)
+            en = float(s.get("end", 0) or 0)
+        except Exception:
+            continue
+        txt = str(s.get("text") or "").strip()
+        if not txt:
+            continue
+        if st <= ts <= en:
+            return txt
+        mid = (st + en) / 2.0
+        d = abs(mid - ts)
+        if d < best_dist:
+            best_dist = d
+            best = txt
+    return best
+
+
+def _enrich_react_flow_readability(react_flow: dict[str, Any], segments: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Improve "read map without video" quality without extra LLM calls:
+    - ensure minimum detail children per main branch
+    - fill weak main highlights from nearest transcript segment
+    """
+    out = _ensure_main_branch_detail_children(react_flow)
+    if not isinstance(out, dict):
+        return out
+    nodes = out.get("nodes")
+    if not isinstance(nodes, list):
+        return out
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        data = n.get("data")
+        if not isinstance(data, dict):
+            continue
+        role = data.get("role")
+        if role == "detail":
+            continue
+        label = str(data.get("label") or "").strip()
+        highlight = str(data.get("highlight") or "").strip()
+        weak = (not highlight) or len(highlight) < 20 or highlight.lower() == label.lower()
+        if not weak:
+            continue
+        try:
+            ts = float(data.get("timestamp", 0) or 0)
+        except Exception:
+            ts = 0.0
+        seg_txt = _nearest_segment_text(segments, ts)
+        if not seg_txt:
+            continue
+        data["highlight"] = seg_txt[:220].strip()
+    return out
 
 
 @dataclass
@@ -603,6 +775,26 @@ class AIService:
         self._last_token_confidence: float | None = None
         self._groq_rate_limited_recently: bool = False
         self._groq_no_logprobs_models: set[str] = set(_GROQ_NO_LOGPROBS_DEFAULT)
+        self._groq_rate_limit_streak: int = 0
+        self._groq_cooldown_until: float = 0.0
+
+    def _is_groq_in_cooldown(self) -> bool:
+        return time.time() < self._groq_cooldown_until
+
+    def _mark_groq_rate_limit(self) -> None:
+        self._groq_rate_limited_recently = True
+        self._groq_rate_limit_streak += 1
+        if self._groq_rate_limit_streak >= _GROQ_RATE_LIMIT_STREAK_FOR_COOLDOWN:
+            self._groq_cooldown_until = time.time() + _GROQ_COOLDOWN_SECONDS
+            logger.warning(
+                "groq_circuit_open streak=%s cooldown_s=%s",
+                self._groq_rate_limit_streak,
+                _GROQ_COOLDOWN_SECONDS,
+            )
+
+    def _mark_groq_success(self) -> None:
+        self._groq_rate_limit_streak = 0
+        self._groq_cooldown_until = 0.0
 
     @staticmethod
     def _select_key_segments(tr: TranscriptionResult, max_segments: int = 96) -> list[str]:
@@ -859,6 +1051,7 @@ class AIService:
         """Snap mindmap/tutor timestamps to ASR segments and recompute accuracy metrics."""
         try:
             result.react_flow = enforce_react_flow_grounding(result.react_flow, segments)
+            result.react_flow = _enrich_react_flow_readability(result.react_flow, segments)
             result.tutor = enforce_tutor_keypoint_timestamps(result.tutor, segments)
             result.accuracy_metrics = compute_accuracy_components(
                 transcript_text=transcript_text,
@@ -900,6 +1093,11 @@ class AIService:
                 continue
             if prov == "groq" and self._groq_client is None:
                 continue
+            if prov == "groq" and self._is_groq_in_cooldown():
+                last_err = KnowledgeGenerationError("Groq is in temporary cooldown after repeated rate limits")
+                logger.warning("knowledge_prompt_skip provider=groq reason=cooldown")
+                continue
+            t0 = time.perf_counter()
             try:
                 raw = self._generate_json_text(prompt, provider=prov)
                 if not raw.strip():
@@ -907,6 +1105,7 @@ class AIService:
 
                 payload = self._load_json_payload(raw, provider=prov, task="knowledge")
                 if isinstance(payload, dict):
+                    payload = _coerce_payload_minimal(payload)
                     rf = payload.get("react_flow")
                     if isinstance(rf, dict):
                         payload["react_flow"] = _ensure_main_branch_detail_children(rf)
@@ -919,6 +1118,14 @@ class AIService:
                     payload = repaired_payload
 
                 conf = self._last_token_confidence
+                if prov == "groq":
+                    self._mark_groq_success()
+                logger.info(
+                    "knowledge_prompt_ok provider=%s latency_ms=%.2f confidence=%s",
+                    prov,
+                    (time.perf_counter() - t0) * 1000.0,
+                    conf,
+                )
                 return KnowledgeGenerationResult(
                     react_flow=payload["react_flow"],
                     quiz=payload["quiz"],
@@ -929,7 +1136,21 @@ class AIService:
                 )
             except Exception as e:
                 last_err = e
-                logger.warning("AI provider %s failed, trying next if available: %s", prov, e)
+                elapsed_s = time.perf_counter() - t0
+                if elapsed_s > _MAX_PROVIDER_ATTEMPT_SECONDS:
+                    logger.warning(
+                        "knowledge_prompt_slow provider=%s elapsed_s=%.2f threshold_s=%.2f",
+                        prov,
+                        elapsed_s,
+                        _MAX_PROVIDER_ATTEMPT_SECONDS,
+                    )
+                logger.warning(
+                    "knowledge_prompt_fail provider=%s latency_ms=%.2f error_type=%s error=%s",
+                    prov,
+                    elapsed_s * 1000.0,
+                    type(e).__name__,
+                    e,
+                )
                 continue
 
         raise KnowledgeGenerationError(str(last_err or "AI generation failed"))
@@ -998,6 +1219,11 @@ class AIService:
                 continue
             if prov == "groq" and self._groq_client is None:
                 continue
+            if prov == "groq" and self._is_groq_in_cooldown():
+                last_err = KnowledgeGenerationError("Groq is in temporary cooldown after repeated rate limits")
+                logger.warning("tutor_prompt_skip provider=groq reason=cooldown")
+                continue
+            t0 = time.perf_counter()
             try:
                 raw = self._generate_json_text(prompt, provider=prov)
                 payload = self._load_json_payload(raw, provider=prov, task="tutor_qa")
@@ -1026,10 +1252,18 @@ class AIService:
                         continue
                     norm_cits.append({"start": st, "end": en, "text": text.strip()})
 
+                if prov == "groq":
+                    self._mark_groq_success()
                 return {"answer": ans.strip(), "citations": norm_cits}
             except Exception as e:
                 last_err = e
-                logger.warning("Tutor provider %s failed, trying next if available: %s", prov, e)
+                elapsed_s = time.perf_counter() - t0
+                logger.warning(
+                    "Tutor provider %s failed, trying next if available: %s (latency_ms=%.2f)",
+                    prov,
+                    e,
+                    elapsed_s * 1000.0,
+                )
                 continue
 
         raise KnowledgeGenerationError(str(last_err or "Tutor generation failed"))
@@ -1054,21 +1288,35 @@ class AIService:
         """Parse provider output as JSON with small syntax-repair fallbacks."""
         candidates = _json_parse_candidates(raw)
         last_decode_err: Exception | None = None
+        parse_attempts = 0
         for txt in candidates:
+            parse_attempts += 1
             try:
                 return json.loads(txt)
             except json.JSONDecodeError as e:
                 last_decode_err = e
 
-        repaired = self._repair_json_once(raw, provider=provider, task=task)
+        repaired = None
+        for _ in range(_MAX_JSON_REPAIR_ATTEMPTS):
+            repaired = self._repair_json_once(raw, provider=provider, task=task)
+            if repaired is not None:
+                break
         if repaired is not None:
             for txt in _json_parse_candidates(repaired):
+                parse_attempts += 1
                 try:
                     return json.loads(txt)
                 except json.JSONDecodeError as e:
                     last_decode_err = e
 
         if last_decode_err is not None:
+            logger.warning(
+                "json_payload_parse_failed provider=%s task=%s parse_attempts=%s error=%s",
+                provider,
+                task,
+                parse_attempts,
+                last_decode_err,
+            )
             raise KnowledgeGenerationError(f"{provider} returned invalid JSON: {last_decode_err}") from last_decode_err
         raise KnowledgeGenerationError(f"{provider} returned invalid JSON")
 
@@ -1086,8 +1334,8 @@ class AIService:
             return None
 
         # Keep prompt size bounded for provider reliability/cost.
-        if len(broken) > 32000:
-            broken = broken[:32000]
+        if len(broken) > _MAX_REPAIR_PAYLOAD_CHARS:
+            broken = broken[:_MAX_REPAIR_PAYLOAD_CHARS]
 
         repair_prompt = (
             "You are a strict JSON repair tool.\n"
@@ -1117,8 +1365,8 @@ class AIService:
             payload_text = json.dumps(payload, ensure_ascii=False)
         except Exception:
             payload_text = str(payload)
-        if len(payload_text) > 32000:
-            payload_text = payload_text[:32000]
+        if len(payload_text) > _MAX_REPAIR_PAYLOAD_CHARS:
+            payload_text = payload_text[:_MAX_REPAIR_PAYLOAD_CHARS]
 
         repair_prompt = (
             "You are a strict JSON normalizer.\n"
@@ -1132,19 +1380,22 @@ class AIService:
             "Input JSON:\n"
             f"{payload_text}"
         )
-        try:
-            fixed_raw = self._generate_json_text(repair_prompt, provider=provider)
-            fixed = self._load_json_payload(fixed_raw, provider=provider, task="knowledge_schema_repair")
-            if isinstance(fixed, dict):
-                rf = fixed.get("react_flow")
-                if isinstance(rf, dict):
-                    fixed["react_flow"] = _ensure_main_branch_detail_children(rf)
-            self._validate_payload(fixed)
-            logger.info("Knowledge schema repaired successfully via provider=%s", provider)
-            return fixed
-        except Exception as e:
-            logger.warning("Knowledge schema repair via %s failed: %s", provider, e)
-            return None
+        last_err: Exception | None = None
+        for _ in range(_MAX_SCHEMA_REPAIR_ATTEMPTS):
+            try:
+                fixed_raw = self._generate_json_text(repair_prompt, provider=provider)
+                fixed = self._load_json_payload(fixed_raw, provider=provider, task="knowledge_schema_repair")
+                if isinstance(fixed, dict):
+                    rf = fixed.get("react_flow")
+                    if isinstance(rf, dict):
+                        fixed["react_flow"] = _ensure_main_branch_detail_children(rf)
+                self._validate_payload(fixed)
+                logger.info("Knowledge schema repaired successfully via provider=%s", provider)
+                return fixed
+            except Exception as e:
+                last_err = e
+        logger.warning("Knowledge schema repair via %s failed: %s", provider, last_err)
+        return None
 
     def _generate_with_google(self, prompt: str) -> str:
         if self._model is None:
@@ -1195,27 +1446,25 @@ class AIService:
 
     def _generate_with_groq(self, prompt: str) -> str:
         assert self._groq_client is not None
-        try:
-            last_error: Exception | None = None
-            for model_name in _GROQ_CHAT_MODEL_CANDIDATES:
-                try:
-                    sys_msg = (
-                        "Follow the user's RISEN prompt: single JSON only, keys react_flow, quiz, tutor. "
-                        "Honor ROLE/INSTRUCTION/EXECUTE; output must match the schema in the user message. "
-                        "No markdown, code fences, or extra text."
-                    )
-                    messages = [
-                        {"role": "system", "content": sys_msg},
-                        {"role": "user", "content": prompt},
-                    ]
-                    completion = None
-                    if model_name in self._groq_no_logprobs_models:
-                        completion = self._groq_client.chat.completions.create(
-                            model=model_name,
-                            temperature=0.15,
-                            messages=messages,
-                        )
-                    else:
+        if self._is_groq_in_cooldown():
+            raise KnowledgeGenerationError("Groq is in temporary cooldown after repeated rate limits")
+        last_error: Exception | None = None
+        sys_msg = (
+            "Follow the user's RISEN prompt: single JSON only, keys react_flow, quiz, tutor. "
+            "Honor ROLE/INSTRUCTION/EXECUTE; output must match the schema in the user message. "
+            "No markdown, code fences, or extra text."
+        )
+        messages = [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": prompt},
+        ]
+        for model_name in _GROQ_CHAT_MODEL_CANDIDATES:
+            t0 = time.perf_counter()
+            try:
+                completion = None
+                used_logprobs = model_name not in self._groq_no_logprobs_models
+                if used_logprobs:
+                    try:
                         completion = self._groq_client.chat.completions.create(
                             model=model_name,
                             temperature=0.15,
@@ -1223,35 +1472,48 @@ class AIService:
                             top_logprobs=1,
                             messages=messages,
                         )
-                except Exception as e_try_logprobs:
-                    if _is_rate_limit_error(e_try_logprobs):
-                        self._groq_rate_limited_recently = True
-                        raise
-                    if model_name in self._groq_no_logprobs_models or not _is_bad_request_error(e_try_logprobs):
-                        raise
-                    self._groq_no_logprobs_models.add(model_name)
-                    logger.info("Groq model %s does not support logprobs; retrying without logprobs", model_name)
+                    except Exception as e_try_logprobs:
+                        if _is_rate_limit_error(e_try_logprobs):
+                            self._mark_groq_rate_limit()
+                            raise
+                        if _is_bad_request_error(e_try_logprobs):
+                            self._groq_no_logprobs_models.add(model_name)
+                            logger.info(
+                                "Groq model %s does not support logprobs; retrying without logprobs",
+                                model_name,
+                            )
+                        else:
+                            raise
+                if completion is None:
                     completion = self._groq_client.chat.completions.create(
                         model=model_name,
                         temperature=0.15,
                         messages=messages,
                     )
-                except Exception as e:  # capture quota/model specific info
-                    last_error = e
-                    msg = str(e)
-                    if _is_rate_limit_error(e):
-                        self._groq_rate_limited_recently = True
-                    logger.warning("Groq model %s failed: %s", model_name, msg)
-                    # Try next candidate if available.
-                    continue
+
                 self._last_token_confidence = _groq_completion_confidence(completion)
                 text = completion.choices[0].message.content if completion.choices else ""
-                logger.info("Groq completion succeeded with model %s", model_name)
+                logger.info(
+                    "groq_completion_ok model=%s used_logprobs=%s latency_ms=%.2f",
+                    model_name,
+                    used_logprobs and model_name not in self._groq_no_logprobs_models,
+                    (time.perf_counter() - t0) * 1000.0,
+                )
                 return str(text or "")
-            raise last_error or RuntimeError("Groq completion failed for all candidate models")
-        except Exception as e:
-            logger.exception("Groq fallback failed")
-            raise KnowledgeGenerationError(f"Groq fallback failed: {e}") from e
+            except Exception as e:
+                last_error = e
+                if _is_rate_limit_error(e):
+                    self._mark_groq_rate_limit()
+                logger.warning(
+                    "groq_completion_fail model=%s latency_ms=%.2f error_type=%s error=%s",
+                    model_name,
+                    (time.perf_counter() - t0) * 1000.0,
+                    type(e).__name__,
+                    e,
+                )
+                continue
+        logger.exception("Groq fallback failed")
+        raise KnowledgeGenerationError(f"Groq fallback failed: {last_error or 'all models failed'}")
 
     @staticmethod
     def _validate_payload(payload: dict[str, Any]) -> None:
