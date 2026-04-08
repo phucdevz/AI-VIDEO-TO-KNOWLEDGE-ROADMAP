@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     supabase_key: str | None = None
     # AI provider preference: "auto" (default), "groq", or "google".
     ai_provider: str = "auto"
+    admin_api_token: str | None = None
+    admin_api_roles: str = "super_admin,ops_admin,content_admin,viewer"
 
     @property
     def cors_origin_list(self) -> list[str]:

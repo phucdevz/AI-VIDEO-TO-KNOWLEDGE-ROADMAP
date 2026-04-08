@@ -22,6 +22,7 @@ from app.admin_env import env_file_path, read_env_values, reload_app_settings, w
 from app.admin_prompt_store import default_prompt_overrides, load_prompt_overrides, save_prompt_overrides
 from app.admin_storage import clear_all_temp, clear_temp_audio, storage_stats_markdown
 from app.config import get_settings
+from app.services.admin_panel_service import AdminPanelService
 from app.services.database_service import DatabaseService
 from app.services.pipeline import PipelineClientError, PipelineError, run_full_extraction_pipeline_with_progress
 
@@ -266,6 +267,22 @@ html, body {
 .status-dot { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:8px; vertical-align:middle; }
 .status-ok { background: #00e676; box-shadow: 0 0 8px rgba(0,230,118,0.5); }
 .status-bad { background: #ff5252; box-shadow: 0 0 8px rgba(255,82,82,0.45); }
+.admin-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 960px) {
+  .admin-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.admin-kpi-card {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 229, 255, 0.16);
+  background: rgba(6, 14, 32, 0.66);
+}
+.admin-kpi-card small { display:block; color:#8aa0c2; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; }
+.admin-kpi-card b { font-size:20px; color:#e8f4ff; font-variant-numeric: tabular-nums; }
 """
 
 _pipeline_lock = threading.Lock()
@@ -818,6 +835,152 @@ def _refresh_analytics_bundle() -> tuple[str, str]:
     return _analytics_trend_html(), _analytics_table_md()
 
 
+def _panel_service() -> AdminPanelService:
+    settings = get_settings()
+    return AdminPanelService(DatabaseService(settings.supabase_url, settings.supabase_key), settings)
+
+
+def _ops_kpi_html() -> str:
+    k = _panel_service().get_kpis()
+    return f"""
+<div class="admin-glass">
+  <div class="admin-kpi-grid">
+    <div class="admin-kpi-card"><small>Requests / min</small><b>{k.requests_per_min:.2f}</b></div>
+    <div class="admin-kpi-card"><small>Success rate</small><b>{k.success_rate * 100:.1f}%</b></div>
+    <div class="admin-kpi-card"><small>p50 / p95 latency</small><b>{k.p50_latency_ms:.0f} / {k.p95_latency_ms:.0f} ms</b></div>
+    <div class="admin-kpi-card"><small>AI accuracy ratio</small><b>{k.avg_accuracy_ratio_pct:.1f}%</b></div>
+  </div>
+  <p class="admin-muted" style="margin:10px 0 0 0;">Errors: 400={k.error_400_count} · 429={k.error_429_count} · 502={k.error_502_count}</p>
+</div>
+"""
+
+
+def _ops_runs_markdown(limit: int) -> str:
+    runs = _panel_service().list_pipeline_runs(limit=max(1, int(limit))).items
+    if not runs:
+        return "### Recent jobs\n\n_No runs found._"
+    lines = [
+        "| Time | Request ID | Provider | Latency | Status | Accuracy |",
+        "|---|---|---|---:|---|---:|",
+    ]
+    for it in runs:
+        ts = it.created_at.isoformat(timespec="seconds") if it.created_at else "—"
+        rid = it.request_id or "—"
+        provider = it.provider or "—"
+        lat = f"{it.latency_ms:.1f}" if isinstance(it.latency_ms, (int, float)) else "—"
+        acc = f"{it.accuracy_ratio_pct:.1f}%" if isinstance(it.accuracy_ratio_pct, (int, float)) else "—"
+        lines.append(f"| {ts} | `{rid}` | `{provider}` | {lat} | {it.status} | {acc} |")
+    return "### Recent jobs\n\n" + "\n".join(lines)
+
+
+def _ops_logs_markdown(
+    limit: int,
+    q: str,
+    provider: str,
+    event_type: str,
+    error_type: str,
+    request_id: str,
+) -> str:
+    rows = _panel_service().search_logs(
+        query=q,
+        provider=provider,
+        event_type=event_type,
+        error_type=error_type,
+        request_id=request_id,
+        limit=max(1, int(limit)),
+    )
+    if not rows:
+        return "### Log explorer\n\n_No matching logs._"
+    lines = ["### Log explorer", "", "| Time | Event | Request ID | Error |", "|---|---|---|---|"]
+    for r in rows:
+        lines.append(
+            f"| {str(r.get('created_at') or '')[:19]} | `{r.get('event_type') or '—'}` | "
+            f"`{r.get('request_id') or '—'}` | `{r.get('error_type') or '—'}` |",
+        )
+    return "\n".join(lines)
+
+
+def _ops_refresh_bundle(
+    runs_limit: int,
+    logs_limit: int,
+    q: str,
+    provider: str,
+    event_type: str,
+    error_type: str,
+    request_id: str,
+) -> tuple[str, str, str]:
+    return (
+        _ops_kpi_html(),
+        _ops_runs_markdown(runs_limit),
+        _ops_logs_markdown(logs_limit, q, provider, event_type, error_type, request_id),
+    )
+
+
+def _quality_summary_markdown() -> str:
+    q = _panel_service().get_quality_summary()
+    return f"""### Quality summary
+
+| Metric | Value |
+|---|---|
+| Reviewed runs | {q.reviewed_runs} |
+| Pass / Fail | {q.pass_count} / {q.fail_count} |
+| Pass rate | {q.pass_rate * 100:.1f}% |
+| Average score (0-1) | {q.average_accuracy_score:.4f} |
+| Average ratio (%) | {q.average_accuracy_ratio_pct:.2f}% |
+"""
+
+
+def _flags_refresh() -> tuple[str, bool, int, int, bool]:
+    f = _panel_service().get_feature_flags()
+    return (
+        f.ai_provider,
+        f.ai_refine_enabled,
+        f.groq_cooldown_seconds,
+        f.retry_budget,
+        f.split_key_routing_enabled,
+    )
+
+
+def _flags_save(
+    ai_provider: str,
+    ai_refine_enabled: bool,
+    groq_cooldown_seconds: int,
+    retry_budget: int,
+    split_key_routing_enabled: bool,
+) -> str:
+    from app.schemas.admin_panel import AdminFeatureFlagsUpdate
+
+    f = _panel_service().update_feature_flags(
+        AdminFeatureFlagsUpdate(
+            ai_provider=ai_provider,
+            ai_refine_enabled=bool(ai_refine_enabled),
+            groq_cooldown_seconds=int(groq_cooldown_seconds),
+            retry_budget=int(retry_budget),
+            split_key_routing_enabled=bool(split_key_routing_enabled),
+        ),
+    )
+    return f"Saved flags: provider={f.ai_provider}, refine={f.ai_refine_enabled}, retry={f.retry_budget}"
+
+
+def _quota_routing_markdown() -> str:
+    d = _panel_service().get_quota_key_routing_status()
+    return f"""### Quota & key routing
+
+| Field | Value |
+|---|---|
+| Split key routing | {d.get("split_key_routing_enabled")} |
+| Groq chat key configured | {d.get("groq_chat_key_configured")} |
+| Groq whisper key configured | {d.get("groq_whisper_key_configured")} |
+| Google key configured | {d.get("google_key_configured")} |
+| Policy | `{d.get("policy_hint")}` |
+"""
+
+
+def _data_cleanup_action(mode: str) -> tuple[str, str]:
+    r = _panel_service().run_data_cleanup(mode)
+    return r.get("message", ""), storage_stats_markdown()
+
+
 def build_admin_blocks() -> gr.Blocks:
     with gr.Blocks(title="EtherAI — Admin Control Plane") as demo:
         with gr.Column(elem_classes=["admin-viewport"]):
@@ -888,7 +1051,31 @@ def build_admin_blocks() -> gr.Blocks:
                             [run_status, metrics_md, full_json, pipe_status],
                         )
 
-                    # —— Tab 2: Analytics ——
+                    # —— Tab 2: Ops Center ——
+                    with gr.Tab("Ops Center"):
+                        gr.Markdown("Dashboard realtime · log explorer · control center", elem_classes=["admin-tab-title"])
+                        with gr.Row():
+                            runs_limit = gr.Slider(label="Recent jobs limit", minimum=10, maximum=200, step=10, value=40)
+                            logs_limit = gr.Slider(label="Logs limit", minimum=10, maximum=200, step=10, value=40)
+                        with gr.Row():
+                            log_q = gr.Textbox(label="Search text", placeholder="request_id, provider, error...", lines=1)
+                            log_provider = gr.Textbox(label="Provider", placeholder="groq/google/admin_api", lines=1)
+                        with gr.Row():
+                            log_event = gr.Textbox(label="Event type", placeholder="admin.audit / pipeline_complete", lines=1)
+                            log_error = gr.Textbox(label="Error type", placeholder="429 / 502 / ...", lines=1)
+                            log_request_id = gr.Textbox(label="Request ID", placeholder="req-...", lines=1)
+                        with gr.Row(elem_classes=["admin-btn-row"]):
+                            ops_refresh_btn = gr.Button("Refresh ops center", variant="primary")
+                        ops_kpi_html = gr.HTML(_ops_kpi_html())
+                        ops_runs_md = gr.Markdown()
+                        ops_logs_md = gr.Markdown()
+                        ops_refresh_btn.click(
+                            _ops_refresh_bundle,
+                            [runs_limit, logs_limit, log_q, log_provider, log_event, log_error, log_request_id],
+                            [ops_kpi_html, ops_runs_md, ops_logs_md],
+                        )
+
+                    # —— Tab 3: Analytics ——
                     with gr.Tab("Analytics & Quality"):
                         gr.Markdown("AI accuracy & history", elem_classes=["admin-tab-title"])
                         gauge_html = gr.HTML(_accuracy_gauge_html())
@@ -909,7 +1096,33 @@ def build_admin_blocks() -> gr.Blocks:
                         csv_btn.click(export_evaluation_csv, outputs=[export_msg, export_csv_file])
                         pdf_btn.click(export_evaluation_pdf, outputs=[export_msg, export_pdf_file])
 
-                    # —— Tab 3: System ——
+                    # —— Tab 4: Governance ——
+                    with gr.Tab("Governance"):
+                        gr.Markdown("Quality review + feature flags", elem_classes=["admin-tab-title"])
+                        quality_md = gr.Markdown(_quality_summary_markdown())
+                        gr.Markdown("### Feature Flags", elem_classes=["admin-muted"])
+                        with gr.Row():
+                            ff_ai_provider = gr.Dropdown(label="AI provider", choices=["auto", "groq", "google"], value="auto")
+                            ff_refine = gr.Checkbox(label="Enable refine pass", value=True)
+                        with gr.Row():
+                            ff_cooldown = gr.Number(label="Groq cooldown (seconds)", value=60, precision=0)
+                            ff_retry = gr.Number(label="Retry budget", value=2, precision=0)
+                            ff_split = gr.Checkbox(label="Split key routing", value=True)
+                        with gr.Row(elem_classes=["admin-btn-row"]):
+                            ff_reload_btn = gr.Button("Reload flags", variant="secondary")
+                            ff_save_btn = gr.Button("Save flags", variant="primary")
+                        ff_out = gr.Markdown()
+                        ff_reload_btn.click(
+                            _flags_refresh,
+                            outputs=[ff_ai_provider, ff_refine, ff_cooldown, ff_retry, ff_split],
+                        )
+                        ff_save_btn.click(
+                            _flags_save,
+                            [ff_ai_provider, ff_refine, ff_cooldown, ff_retry, ff_split],
+                            ff_out,
+                        )
+
+                    # —— Tab 5: System ——
                     with gr.Tab("System & Config"):
                         gr.Markdown("API keys & health", elem_classes=["admin-tab-title"])
                         gr.HTML(connectivity_status_html)
@@ -947,7 +1160,7 @@ def build_admin_blocks() -> gr.Blocks:
                         )
                         health_md = gr.Markdown()
 
-                    # —— Tab 4: Storage ——
+                    # —— Tab 6: Storage & Data Admin ——
                     with gr.Tab("Storage"):
                         gr.Markdown("Dọn dữ liệu tạm trên server", elem_classes=["admin-tab-title"])
                         gr.Markdown(
@@ -959,6 +1172,7 @@ def build_admin_blocks() -> gr.Blocks:
                         with gr.Row(elem_classes=["admin-btn-row"]):
                             refresh_st = gr.Button("Làm mới số liệu", variant="secondary")
                             clear_audio_btn = gr.Button("Xóa temp/audio", variant="secondary")
+                            quota_refresh = gr.Button("Quota & key routing", variant="secondary")
                         confirm_clear_temp = gr.Checkbox(
                             label="Xác nhận xóa toàn bộ nội dung temp/ (CSV, PDF, audio, …)",
                             value=False,
@@ -966,15 +1180,24 @@ def build_admin_blocks() -> gr.Blocks:
                         with gr.Row(elem_classes=["admin-btn-row"]):
                             clear_all_btn = gr.Button("Xóa hàng loạt — toàn bộ temp/", variant="primary")
                         storage_msg = gr.Markdown()
+                        quota_md = gr.Markdown()
                         refresh_st.click(storage_stats_markdown, outputs=storage_stats)
                         clear_audio_btn.click(_clear_temp_audio_bundle, outputs=[storage_msg, storage_stats])
+                        quota_refresh.click(_quota_routing_markdown, outputs=quota_md)
                         clear_all_btn.click(
                             _clear_all_temp_bundle,
                             [confirm_clear_temp],
                             [storage_msg, storage_stats],
                         )
+                        with gr.Row(elem_classes=["admin-btn-row"]):
+                            cleanup_stats = gr.Button("Admin cleanup: stats")
+                            cleanup_audio = gr.Button("Admin cleanup: audio")
+                            cleanup_all = gr.Button("Admin cleanup: all")
+                        cleanup_stats.click(lambda: _data_cleanup_action("stats"), outputs=[storage_msg, storage_stats])
+                        cleanup_audio.click(lambda: _data_cleanup_action("audio"), outputs=[storage_msg, storage_stats])
+                        cleanup_all.click(lambda: _data_cleanup_action("all"), outputs=[storage_msg, storage_stats])
 
-                    # —— Tab 5: Prompts ——
+                    # —— Tab 7: Prompts ——
                     with gr.Tab("AI Prompts"):
                         gr.Markdown("Tùy chỉnh prompt (append / override)", elem_classes=["admin-tab-title"])
                         gr.Markdown(
@@ -1029,6 +1252,16 @@ def build_admin_blocks() -> gr.Blocks:
             outputs=[groq_in, groq_chat_in, groq_whisper_in, google_in, supa_url, supa_key, ai_provider],
         )
         demo.load(_refresh_analytics_bundle, outputs=[trend_html, analytics_md])
+        demo.load(
+            lambda: _ops_refresh_bundle(40, 40, "", "", "", "", ""),
+            outputs=[ops_kpi_html, ops_runs_md, ops_logs_md],
+        )
+        demo.load(
+            _flags_refresh,
+            outputs=[ff_ai_provider, ff_refine, ff_cooldown, ff_retry, ff_split],
+        )
+        demo.load(_quality_summary_markdown, outputs=quality_md)
+        demo.load(_quota_routing_markdown, outputs=quota_md)
         demo.load(build_health_markdown, outputs=health_md)
         demo.load(
             _load_prompt_fields,
