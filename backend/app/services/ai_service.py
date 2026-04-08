@@ -33,6 +33,11 @@ _GROQ_CHAT_MODEL_CANDIDATES: tuple[str, ...] = (
     "qwen/qwen3-32b",
 )
 
+# Some Groq chat models reject `logprobs` for chat.completions, causing avoidable 400s.
+_GROQ_NO_LOGPROBS_DEFAULT: set[str] = {
+    "llama-3.3-70b-versatile",
+}
+
 _REFINEMENT_PROMPT_SUFFIX = """
 
 === REFINEMENT PASS (same RISEN task, stricter alignment) ===
@@ -146,6 +151,24 @@ def _timeline_prompt_rules(duration_s: float | None) -> str:
         f"(4) **FORBIDDEN:** shallow filler nodes; **FORBIDDEN:** a nearly empty map for a long, content-heavy recording. "
         f"(5) Prefer **distinct, grounded** labels over vague duplicates — merge only true duplicates."
     )
+
+
+def _resolve_output_lang_code(target_lang: str | None, transcript_lang: str | None) -> str:
+    """
+    Always prefer user-selected target language for learner-facing outputs.
+    Fallback to detected transcript language only when target_lang is missing/invalid.
+    """
+    tl = (target_lang or "").strip().lower()
+    if tl in ("vi", "en"):
+        return tl
+
+    raw = (transcript_lang or "").strip().lower()
+    # Whisper/Groq may return codes like "en", "en-US", "vi", "vi-VN".
+    if raw.startswith("vi"):
+        return "vi"
+    if raw.startswith("en"):
+        return "en"
+    return "vi"
 
 
 def _build_risen_knowledge_prompt(
@@ -400,6 +423,144 @@ def _validate_main_branches_have_detail_children(nodes: list[Any], edges: list[A
             )
 
 
+def _ensure_main_branch_detail_children(react_flow: dict[str, Any]) -> dict[str, Any]:
+    """
+    Soft-fix for strict mindmap rule:
+    each direct child of root should have >=1 child with role='detail'.
+    """
+    if not isinstance(react_flow, dict):
+        return react_flow
+    nodes = react_flow.get("nodes")
+    edges = react_flow.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return react_flow
+
+    node_by_id: dict[str, dict[str, Any]] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nid = n.get("id")
+        if isinstance(nid, str) and nid.strip():
+            node_by_id[nid.strip()] = n
+    all_ids = set(node_by_id.keys())
+    if not all_ids:
+        return react_flow
+
+    in_deg: dict[str, int] = {nid: 0 for nid in all_ids}
+    out_adj: dict[str, list[str]] = {nid: [] for nid in all_ids}
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        s, t = e.get("source"), e.get("target")
+        if not isinstance(s, str) or not isinstance(t, str):
+            continue
+        if s not in all_ids or t not in all_ids:
+            continue
+        out_adj[s].append(t)
+        in_deg[t] = in_deg.get(t, 0) + 1
+
+    roots = [nid for nid in all_ids if in_deg.get(nid, 0) == 0]
+    if len(roots) != 1:
+        return react_flow
+    root_id = roots[0]
+    mains = out_adj.get(root_id, [])
+    if not mains:
+        return react_flow
+
+    existing_edge_ids: set[str] = set()
+    for e in edges:
+        if isinstance(e, dict):
+            eid = e.get("id")
+            if isinstance(eid, str) and eid.strip():
+                existing_edge_ids.add(eid.strip())
+
+    def _mk_unique_edge_id(base: str) -> str:
+        cand = base
+        i = 2
+        while cand in existing_edge_ids:
+            cand = f"{base}_{i}"
+            i += 1
+        existing_edge_ids.add(cand)
+        return cand
+
+    for mid in mains:
+        kids = out_adj.get(mid, [])
+        has_detail = False
+        for kid in kids:
+            kn = node_by_id.get(kid)
+            if not isinstance(kn, dict):
+                continue
+            data = kn.get("data")
+            if isinstance(data, dict) and data.get("role") == "detail":
+                has_detail = True
+                break
+        if has_detail:
+            continue
+
+        # Prefer marking an existing child as a detail node.
+        if kids:
+            first_kid = node_by_id.get(kids[0])
+            if isinstance(first_kid, dict):
+                data = first_kid.get("data")
+                if not isinstance(data, dict):
+                    data = {}
+                    first_kid["data"] = data
+                data["role"] = "detail"
+                label = str(data.get("label", "") or "").strip() or "Chi tiet"
+                data["label"] = label[:44]
+                if "highlight" in data and isinstance(data.get("highlight"), str):
+                    data["highlight"] = str(data.get("highlight") or "")[:120]
+                continue
+
+        # If no children, append a small synthetic detail child.
+        parent = node_by_id.get(mid) or {}
+        parent_data = parent.get("data") if isinstance(parent.get("data"), dict) else {}
+        parent_pos = parent.get("position") if isinstance(parent.get("position"), dict) else {}
+        try:
+            px = float(parent_pos.get("x", 0.0))
+            py = float(parent_pos.get("y", 0.0))
+        except Exception:
+            px, py = 0.0, 0.0
+        try:
+            pts = float(parent_data.get("timestamp", 0.0))
+        except Exception:
+            pts = 0.0
+        parent_label = str(parent_data.get("label", "") or "").strip()
+        base_label = f"{parent_label} chi tiet".strip() if parent_label else "Chi tiet"
+        base_label = base_label[:44] or "Chi tiet"
+
+        detail_id_base = f"{mid}_detail"
+        detail_id = detail_id_base
+        c = 2
+        while detail_id in all_ids:
+            detail_id = f"{detail_id_base}_{c}"
+            c += 1
+        all_ids.add(detail_id)
+
+        detail_node = {
+            "id": detail_id,
+            "type": "neural",
+            "position": {"x": px + 180.0, "y": py + 110.0},
+            "data": {"label": base_label, "timestamp": pts, "role": "detail", "highlight": ""},
+        }
+        nodes.append(detail_node)
+        node_by_id[detail_id] = detail_node
+        out_adj.setdefault(mid, []).append(detail_id)
+        in_deg[detail_id] = 1
+
+        edge_id = _mk_unique_edge_id(f"e_{mid}_{detail_id}")
+        edges.append(
+            {
+                "id": edge_id,
+                "source": mid,
+                "target": detail_id,
+                "type": "neuralFlow",
+            }
+        )
+
+    return react_flow
+
+
 @dataclass
 class KnowledgeGenerationResult:
     react_flow: dict[str, Any]
@@ -440,6 +601,8 @@ class AIService:
 
         self._groq_client: Groq | None = Groq(api_key=self._groq_api_key) if self._groq_api_key else None
         self._last_token_confidence: float | None = None
+        self._groq_rate_limited_recently: bool = False
+        self._groq_no_logprobs_models: set[str] = set(_GROQ_NO_LOGPROBS_DEFAULT)
 
     @staticmethod
     def _select_key_segments(tr: TranscriptionResult, max_segments: int = 96) -> list[str]:
@@ -540,12 +703,9 @@ class AIService:
                 continue
             try:
                 raw = self._generate_json_text(prompt, provider=prov)
-                payload = json.loads(raw)
+                payload = self._load_json_payload(raw, provider=prov, task="outline")
                 if not isinstance(payload, dict):
-                    cleaned = _extract_json_object(raw)
-                    if cleaned is None:
-                        raise KnowledgeGenerationError("outline: invalid JSON")
-                    payload = json.loads(cleaned)
+                    raise KnowledgeGenerationError("outline: JSON root must be an object")
                 blocks = parse_outline_payload(payload, duration_s=duration_s)
                 if blocks:
                     logger.info("Video outline: %s blocks (provider=%s)", len(blocks), prov)
@@ -567,6 +727,9 @@ class AIService:
         target_lang: str | None = "vi",
         quiz_difficulty: str | None = "medium",
     ) -> KnowledgeGenerationResult:
+        # Reset per-request rate-limit signal used by refinement gating.
+        self._groq_rate_limited_recently = False
+
         # Longer videos need more coverage signals; keep within a safe payload size.
         duration_s = float(tr.duration) if isinstance(tr.duration, (int, float)) and tr.duration else None
         seg_cap = 96
@@ -580,9 +743,7 @@ class AIService:
         if len(tr.segments) > seg_cap:
             segment_lines.append(f"... ({len(tr.segments) - seg_cap} more segments omitted)")
 
-        tl = (target_lang or "vi").strip().lower()
-        if tl not in ("vi", "en"):
-            tl = "vi"
+        tl = _resolve_output_lang_code(target_lang, tr.language)
         target_name = "Vietnamese" if tl == "vi" else "English"
 
         qd = (quiz_difficulty or "medium").strip().lower()
@@ -650,7 +811,7 @@ class AIService:
 
         out = base
         score = metrics.get("accuracy_score", 0.0)
-        if score < ACCURACY_REFINEMENT_THRESHOLD:
+        if self._should_run_refinement(score=score, provider_used=base.provider_used):
             logger.info(
                 "Accuracy score %.3f below threshold %.2f; running refinement pass",
                 score,
@@ -678,6 +839,12 @@ class AIService:
             except Exception:
                 logger.exception("Refinement pass failed; keeping initial generation")
                 base.refined = True
+        elif score < ACCURACY_REFINEMENT_THRESHOLD:
+            logger.info(
+                "Skipping refinement pass to reduce latency (provider=%s, groq_rate_limited=%s)",
+                base.provider_used or "unknown",
+                self._groq_rate_limited_recently,
+            )
 
         self._finalize_with_grounding(out, transcript_text=tr.text or "", segments=segs)
         return out
@@ -702,6 +869,20 @@ class AIService:
         except Exception:
             logger.exception("Segment grounding failed; keeping model output")
 
+    def _should_run_refinement(self, *, score: float, provider_used: str | None) -> bool:
+        """Gate expensive refinement pass when provider is under quota pressure."""
+        if score >= ACCURACY_REFINEMENT_THRESHOLD:
+            return False
+        # If Groq is getting 429 and there is no Google fallback key, refinement often adds
+        # heavy delay with little reliability gain. Keep base result for faster completion.
+        if (
+            (provider_used or "").strip().lower() == "groq"
+            and self._groq_rate_limited_recently
+            and self._model is None
+        ):
+            return False
+        return True
+
     def _execute_knowledge_prompt(self, prompt: str) -> KnowledgeGenerationResult:
         """Try providers in order until JSON validates; attaches provider_used and confidence."""
         self._last_token_confidence = None
@@ -724,15 +905,19 @@ class AIService:
                 if not raw.strip():
                     raise KnowledgeGenerationError("Empty AI response")
 
+                payload = self._load_json_payload(raw, provider=prov, task="knowledge")
+                if isinstance(payload, dict):
+                    rf = payload.get("react_flow")
+                    if isinstance(rf, dict):
+                        payload["react_flow"] = _ensure_main_branch_detail_children(rf)
                 try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    cleaned = _extract_json_object(raw)
-                    if cleaned is None:
-                        raise KnowledgeGenerationError(f"{prov} returned invalid JSON")
-                    payload = json.loads(cleaned)
+                    self._validate_payload(payload)
+                except Exception:
+                    repaired_payload = self._repair_knowledge_schema_once(payload, provider=prov)
+                    if repaired_payload is None:
+                        raise
+                    payload = repaired_payload
 
-                self._validate_payload(payload)
                 conf = self._last_token_confidence
                 return KnowledgeGenerationResult(
                     react_flow=payload["react_flow"],
@@ -815,14 +1000,7 @@ class AIService:
                 continue
             try:
                 raw = self._generate_json_text(prompt, provider=prov)
-                cleaned = None
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    cleaned = _extract_json_object(raw)
-                    if cleaned is None:
-                        raise KnowledgeGenerationError(f"{prov} returned invalid JSON")
-                    payload = json.loads(cleaned)
+                payload = self._load_json_payload(raw, provider=prov, task="tutor_qa")
 
                 ans = payload.get("answer")
                 if not isinstance(ans, str) or not ans.strip():
@@ -871,6 +1049,102 @@ class AIService:
                 # Bubble up so generate_from_transcript can fallback to Groq in auto mode.
                 raise KnowledgeGenerationError(f"Gemini request failed: {e}") from e
         raise KnowledgeGenerationError(f"Unknown provider: {provider}")
+
+    def _load_json_payload(self, raw: str, *, provider: str, task: str) -> Any:
+        """Parse provider output as JSON with small syntax-repair fallbacks."""
+        candidates = _json_parse_candidates(raw)
+        last_decode_err: Exception | None = None
+        for txt in candidates:
+            try:
+                return json.loads(txt)
+            except json.JSONDecodeError as e:
+                last_decode_err = e
+
+        repaired = self._repair_json_once(raw, provider=provider, task=task)
+        if repaired is not None:
+            for txt in _json_parse_candidates(repaired):
+                try:
+                    return json.loads(txt)
+                except json.JSONDecodeError as e:
+                    last_decode_err = e
+
+        if last_decode_err is not None:
+            raise KnowledgeGenerationError(f"{provider} returned invalid JSON: {last_decode_err}") from last_decode_err
+        raise KnowledgeGenerationError(f"{provider} returned invalid JSON")
+
+    def _repair_json_once(self, raw: str, *, provider: str, task: str) -> str | None:
+        """
+        Ask the same provider to repair malformed JSON without changing semantics.
+        Keeps this to one attempt to avoid retry loops and extra latency.
+        """
+        if provider == "groq" and self._groq_rate_limited_recently:
+            logger.info("Skip JSON repair via groq (%s): recent rate limit", task)
+            return None
+        broken = _extract_json_object(raw) or raw
+        broken = (broken or "").strip()
+        if not broken:
+            return None
+
+        # Keep prompt size bounded for provider reliability/cost.
+        if len(broken) > 32000:
+            broken = broken[:32000]
+
+        repair_prompt = (
+            "You are a strict JSON repair tool.\n"
+            f"Task: repair malformed JSON for '{task}'.\n"
+            "Rules:\n"
+            "1) Output exactly ONE valid JSON object.\n"
+            "2) Keep keys/values as close as possible to the original.\n"
+            "3) Do not add markdown, comments, or explanations.\n"
+            "4) If the input is already valid, return it unchanged.\n\n"
+            "Broken JSON:\n"
+            f"{broken}"
+        )
+        try:
+            return self._generate_json_text(repair_prompt, provider=provider)
+        except Exception as e:
+            logger.warning("JSON repair via %s failed (%s): %s", provider, task, e)
+            return None
+
+    def _repair_knowledge_schema_once(self, payload: Any, *, provider: str) -> dict[str, Any] | None:
+        """
+        Convert a parsed-but-invalid payload into the strict knowledge schema with one retry.
+        """
+        if provider == "groq" and self._groq_rate_limited_recently:
+            logger.info("Skip knowledge schema repair via groq: recent rate limit")
+            return None
+        try:
+            payload_text = json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            payload_text = str(payload)
+        if len(payload_text) > 32000:
+            payload_text = payload_text[:32000]
+
+        repair_prompt = (
+            "You are a strict JSON normalizer.\n"
+            "Rewrite the following parsed JSON into EXACTLY this root shape:\n"
+            "{\"react_flow\":{\"nodes\":[],\"edges\":[]},\"quiz\":{\"title\":\"\",\"questions\":[]},\"tutor\":{\"summary\":\"\",\"key_points\":[]}}\n"
+            "Rules:\n"
+            "1) Keep meaning/content from input as much as possible.\n"
+            "2) Ensure react_flow.nodes and react_flow.edges are arrays.\n"
+            "3) Ensure quiz.questions is an array and tutor.key_points is an array.\n"
+            "4) Output ONE valid JSON object only. No markdown/explanations.\n\n"
+            "Input JSON:\n"
+            f"{payload_text}"
+        )
+        try:
+            fixed_raw = self._generate_json_text(repair_prompt, provider=provider)
+            fixed = self._load_json_payload(fixed_raw, provider=provider, task="knowledge_schema_repair")
+            if isinstance(fixed, dict):
+                rf = fixed.get("react_flow")
+                if isinstance(rf, dict):
+                    fixed["react_flow"] = _ensure_main_branch_detail_children(rf)
+            self._validate_payload(fixed)
+            logger.info("Knowledge schema repaired successfully via provider=%s", provider)
+            return fixed
+        except Exception as e:
+            logger.warning("Knowledge schema repair via %s failed: %s", provider, e)
+            return None
 
     def _generate_with_google(self, prompt: str) -> str:
         if self._model is None:
@@ -935,7 +1209,13 @@ class AIService:
                         {"role": "user", "content": prompt},
                     ]
                     completion = None
-                    try:
+                    if model_name in self._groq_no_logprobs_models:
+                        completion = self._groq_client.chat.completions.create(
+                            model=model_name,
+                            temperature=0.15,
+                            messages=messages,
+                        )
+                    else:
                         completion = self._groq_client.chat.completions.create(
                             model=model_name,
                             temperature=0.15,
@@ -943,22 +1223,31 @@ class AIService:
                             top_logprobs=1,
                             messages=messages,
                         )
-                    except Exception:
-                        completion = self._groq_client.chat.completions.create(
-                            model=model_name,
-                            temperature=0.15,
-                            messages=messages,
-                        )
-                    self._last_token_confidence = _groq_completion_confidence(completion)
-                    text = completion.choices[0].message.content if completion.choices else ""
-                    logger.info("Groq completion succeeded with model %s", model_name)
-                    return str(text or "")
+                except Exception as e_try_logprobs:
+                    if _is_rate_limit_error(e_try_logprobs):
+                        self._groq_rate_limited_recently = True
+                        raise
+                    if model_name in self._groq_no_logprobs_models or not _is_bad_request_error(e_try_logprobs):
+                        raise
+                    self._groq_no_logprobs_models.add(model_name)
+                    logger.info("Groq model %s does not support logprobs; retrying without logprobs", model_name)
+                    completion = self._groq_client.chat.completions.create(
+                        model=model_name,
+                        temperature=0.15,
+                        messages=messages,
+                    )
                 except Exception as e:  # capture quota/model specific info
                     last_error = e
                     msg = str(e)
+                    if _is_rate_limit_error(e):
+                        self._groq_rate_limited_recently = True
                     logger.warning("Groq model %s failed: %s", model_name, msg)
                     # Try next candidate if available.
                     continue
+                self._last_token_confidence = _groq_completion_confidence(completion)
+                text = completion.choices[0].message.content if completion.choices else ""
+                logger.info("Groq completion succeeded with model %s", model_name)
+                return str(text or "")
             raise last_error or RuntimeError("Groq completion failed for all candidate models")
         except Exception as e:
             logger.exception("Groq fallback failed")
@@ -1156,10 +1445,6 @@ def _extract_json_object(text: str) -> str | None:
         if m:
             text = m.group(1).strip()
 
-    # Fast-path: pure object.
-    if text.startswith("{") and text.endswith("}"):
-        return text
-
     start = text.find("{")
     if start < 0:
         return None
@@ -1194,6 +1479,42 @@ def _extract_json_object(text: str) -> str | None:
     return None
 
 
+def _json_parse_candidates(text: str) -> list[str]:
+    """
+    Candidate strings to parse in order:
+    1) raw text
+    2) first extracted JSON object
+    3) trailing-comma-normalized variants of (1) and (2)
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    out: list[str] = []
+
+    def _push(val: str) -> None:
+        v = (val or "").strip()
+        if v and v not in out:
+            out.append(v)
+
+    _push(raw)
+    extracted = _extract_json_object(raw)
+    if extracted is not None:
+        _push(extracted)
+
+    def _strip_trailing_commas(v: str) -> str:
+        return re.sub(r",(\s*[}\]])", r"\1", v)
+
+    for v in list(out):
+        _push(_strip_trailing_commas(v))
+    return out
+
+
 def _is_rate_limit_error(err: Exception) -> bool:
     msg = str(err).lower()
     return "429" in msg or "rate limit" in msg or "resource exhausted" in msg
+
+
+def _is_bad_request_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return "400" in msg or "bad request" in msg or "invalid_request_error" in msg

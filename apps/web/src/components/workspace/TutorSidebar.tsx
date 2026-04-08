@@ -19,6 +19,54 @@ const CHAT_STORAGE_PREFIX = 'etherai:tutor-chat-v1:'
 const MAX_CHAT_MESSAGES = 40
 const SUMMARY_COLLAPSED_KEY = 'etherai:tutor-autosummary-collapsed-v1'
 
+function normalizeLectureKey(raw: string): string {
+  return (raw ?? '').trim()
+}
+
+function storageKeyForLectureKey(lectureKey: string): string {
+  const k = normalizeLectureKey(lectureKey)
+  return k ? `${CHAT_STORAGE_PREFIX}${k}` : ''
+}
+
+function safeParseChat(raw: string | null): ChatMessage[] | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return null
+    const msgs = parsed
+      .filter((m) => m && typeof m === 'object')
+      .slice(0, MAX_CHAT_MESSAGES)
+      .map((m) => {
+        const mm = m as Partial<ChatMessage>
+        const role = mm.role === 'assistant' ? 'assistant' : 'user'
+        const text = typeof mm.text === 'string' ? mm.text : ''
+        const id =
+          typeof mm.id === 'string' && mm.id
+            ? mm.id
+            : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        const citations = Array.isArray(mm.citations)
+          ? mm.citations
+              .filter((c) => c && typeof c === 'object')
+              .slice(0, 3)
+              .map((c) => {
+                const cc = c as { start?: unknown; end?: unknown; text?: unknown }
+                return {
+                  start: Number(cc.start) || 0,
+                  end: Number(cc.end) || 0,
+                  text: typeof cc.text === 'string' ? cc.text : '',
+                }
+              })
+              .filter((c) => c.text.trim().length > 0)
+          : undefined
+        return { id, role: role as ChatRole, text, citations }
+      })
+      .filter((m) => m.text.trim().length > 0)
+    return msgs
+  } catch {
+    return null
+  }
+}
+
 function formatClipRange(start: number, end: number) {
   const fmt = (total: number) => {
     if (!Number.isFinite(total) || total < 0) return '--:--'
@@ -38,6 +86,7 @@ export function TutorSidebar() {
   const [tab, setTab] = useState<TutorTab>('summary')
   const [chat, setChat] = useState<ChatMessage[]>([])
   const [asking, setAsking] = useState(false)
+  const chatHydratedForKeyRef = useRef<string>('') // prevents overwriting storage with [] on first key switch
   const [summaryCollapsed, setSummaryCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -58,70 +107,86 @@ export function TutorSidebar() {
   const clipLoop = useWorkspaceStore((s) => s.clipLoop)
   const pipelineLectureId = useWorkspaceStore((s) => s.pipelineLectureId)
   const pipelineVideoUrl = useWorkspaceStore((s) => s.pipelineVideoUrl ?? s.pipelineSourceUrl)
+  const authUser = useAuthStore((s) => s.user)
   const userId = useAuthStore((s) => s.user?.id ?? null)
   const pushToast = useToastStore((s) => s.pushToast)
+  const tutorDisplayName = useMemo(() => {
+    const md = (authUser?.user_metadata ?? {}) as Record<string, unknown>
+    const fullName = typeof md.full_name === 'string' ? md.full_name.trim() : ''
+    if (fullName) return fullName
+    const displayName = typeof md.display_name === 'string' ? md.display_name.trim() : ''
+    if (displayName) return displayName
+    const email = (authUser?.email ?? '').trim()
+    if (email.includes('@')) return email.split('@')[0] ?? 'ban'
+    if (email) return email
+    return 'ban'
+  }, [authUser])
 
-  const lectureKey = useMemo(() => {
-    const paramLecture = (searchParams.get('lecture') ?? '').trim()
-    const k = (paramLecture || pipelineLectureId || pipelineVideoUrl || '').trim()
-    return k ? `${CHAT_STORAGE_PREFIX}${k}` : ''
+  /**
+   * Primary key: stable lecture_id when present; fallback to explicit route param;
+   * lastly fallback to video URL. When the key changes (e.g. video_url -> lecture_id),
+   * we migrate chat forward so reload doesn't look like "lost history".
+   */
+  const primaryLectureKey = useMemo(() => {
+    const paramLecture = normalizeLectureKey(searchParams.get('lecture') ?? '')
+    const id = normalizeLectureKey(pipelineLectureId ?? '')
+    const url = normalizeLectureKey(pipelineVideoUrl ?? '')
+    return id || paramLecture || url
+  }, [pipelineLectureId, pipelineVideoUrl, searchParams])
+
+  const storageKey = useMemo(() => storageKeyForLectureKey(primaryLectureKey), [primaryLectureKey])
+
+  const candidateStorageKeys = useMemo(() => {
+    const paramLecture = normalizeLectureKey(searchParams.get('lecture') ?? '')
+    const id = normalizeLectureKey(pipelineLectureId ?? '')
+    const url = normalizeLectureKey(pipelineVideoUrl ?? '')
+    const keys = [id, paramLecture, url].filter((k) => k.length > 0)
+    const uniq: string[] = []
+    for (const k of keys) if (!uniq.includes(k)) uniq.push(k)
+    return uniq.map(storageKeyForLectureKey).filter((k) => k.length > 0)
   }, [pipelineLectureId, pipelineVideoUrl, searchParams])
 
   useEffect(() => {
-    if (!lectureKey) return
+    if (!storageKey) return
     try {
-      const raw = window.localStorage.getItem(lectureKey)
-      if (!raw) {
-        setChat([])
-        return
+      // Load from any known key (lecture_id, route param, video_url).
+      let found: ChatMessage[] | null = null
+      let foundKey: string | null = null
+      for (const k of candidateStorageKeys) {
+        const msgs = safeParseChat(window.localStorage.getItem(k))
+        if (msgs && msgs.length > 0) {
+          found = msgs
+          foundKey = k
+          break
+        }
       }
-      const parsed = JSON.parse(raw) as unknown
-      if (!Array.isArray(parsed)) {
-        setChat([])
-        return
+      setChat(found ?? [])
+
+      // Migrate forward to the primary key so future loads are stable.
+      if (found && found.length > 0 && foundKey && foundKey !== storageKey) {
+        window.localStorage.setItem(storageKey, JSON.stringify(found.slice(-MAX_CHAT_MESSAGES)))
       }
-      const msgs = parsed
-        .filter((m) => m && typeof m === 'object')
-        .slice(0, MAX_CHAT_MESSAGES)
-        .map((m) => {
-          const mm = m as Partial<ChatMessage>
-          const role = mm.role === 'assistant' ? 'assistant' : 'user'
-          const text = typeof mm.text === 'string' ? mm.text : ''
-          const id =
-            typeof mm.id === 'string' && mm.id
-              ? mm.id
-              : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-          const citations = Array.isArray(mm.citations)
-            ? mm.citations
-                .filter((c) => c && typeof c === 'object')
-                .slice(0, 3)
-                .map((c) => {
-                  const cc = c as { start?: unknown; end?: unknown; text?: unknown }
-                  return {
-                    start: Number(cc.start) || 0,
-                    end: Number(cc.end) || 0,
-                    text: typeof cc.text === 'string' ? cc.text : '',
-                  }
-                })
-                .filter((c) => c.text.trim().length > 0)
-            : undefined
-          return { id, role: role as ChatRole, text, citations }
-        })
-        .filter((m) => m.text.trim().length > 0)
-      setChat(msgs)
+      chatHydratedForKeyRef.current = storageKey
     } catch {
       setChat([])
+      chatHydratedForKeyRef.current = storageKey
     }
-  }, [lectureKey])
+  }, [candidateStorageKeys, storageKey])
 
   useEffect(() => {
-    if (!lectureKey) return
+    if (!storageKey) return
+    // Avoid clobbering an existing chat history with [] during the initial key switch.
+    if (chatHydratedForKeyRef.current !== storageKey) return
     try {
-      window.localStorage.setItem(lectureKey, JSON.stringify(chat.slice(-MAX_CHAT_MESSAGES)))
+      if (chat.length === 0) {
+        const existing = safeParseChat(window.localStorage.getItem(storageKey))
+        if (existing && existing.length > 0) return
+      }
+      window.localStorage.setItem(storageKey, JSON.stringify(chat.slice(-MAX_CHAT_MESSAGES)))
     } catch {
       // ignore (private mode / blocked storage)
     }
-  }, [chat, lectureKey])
+  }, [chat, storageKey])
 
   useEffect(() => {
     try {
@@ -265,7 +330,15 @@ export function TutorSidebar() {
           : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
       setChat((m) => [
         ...m.slice(-MAX_CHAT_MESSAGES + 1),
-        { id: aid, role: 'assistant', text: r.answer, citations: r.citations ?? [] },
+        {
+          id: aid,
+          role: 'assistant',
+          text:
+            /^\s*(chao|chào|hello|hi)\b/i.test(r.answer)
+              ? r.answer
+              : `Chào ${tutorDisplayName}, ${r.answer}`,
+          citations: r.citations ?? [],
+        },
       ])
     } catch (e) {
       // toast already handled by api interceptor

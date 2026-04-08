@@ -3,6 +3,8 @@ from __future__ import annotations
 import html
 import io
 import re
+import unicodedata
+from urllib.parse import quote
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -35,6 +37,15 @@ def _safe_filename(name: str) -> str:
     n = (name or "").strip() or "quiz"
     n = re.sub(r'[<>:"/\\\\|?*]+', "", n).strip()
     return n[:120] or "quiz"
+
+
+def _ascii_filename(name: str) -> str:
+    """ASCII fallback for HTTP header `filename=` (latin-1 safe)."""
+    n = _safe_filename(name)
+    n = unicodedata.normalize("NFKD", n)
+    n = n.encode("ascii", "ignore").decode("ascii")
+    n = re.sub(r"[^A-Za-z0-9._ -]+", "", n).strip(" ._")
+    return (n or "quiz")[:120]
 
 
 def _pick_quiz(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -199,10 +210,15 @@ async def export_quiz_pdf(
     doc.build(story)
     buf.seek(0)
 
-    filename = _safe_filename(title) + ".pdf"
+    filename_unicode = _safe_filename(title) + ".pdf"
+    filename_ascii = _ascii_filename(title) + ".pdf"
+    content_disposition = (
+        f'attachment; filename="{filename_ascii}"; '
+        f"filename*=UTF-8''{quote(filename_unicode)}"
+    )
     return StreamingResponse(
         buf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition},
     )
 
