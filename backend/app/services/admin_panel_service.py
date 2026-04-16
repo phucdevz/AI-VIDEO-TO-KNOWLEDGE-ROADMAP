@@ -41,6 +41,20 @@ class AdminPanelService:
                 return max(0.0, min(100.0, float(s) * 100.0))
         return None
 
+    @staticmethod
+    def _extract_metric(row: dict[str, Any], *keys: str) -> float | None:
+        for key in keys:
+            val = row.get(key)
+            if isinstance(val, (int, float)):
+                return float(val)
+        pm = row.get("pipeline_metrics")
+        if isinstance(pm, dict):
+            for key in keys:
+                val = pm.get(key)
+                if isinstance(val, (int, float)):
+                    return float(val)
+        return None
+
     def get_kpis(self) -> AdminKpiResponse:
         rows = self._list_logs(240)
         now = datetime.now(UTC)
@@ -99,6 +113,9 @@ class AdminPanelService:
             elif row.get("event_type"):
                 status = "success"
             ratio_pct = self._extract_accuracy_ratio_pct(row)
+            sim_s = self._extract_metric(row, "similarity_s", "accuracy_s")
+            ts_t = self._extract_metric(row, "timestamp_t", "accuracy_t")
+            kw_k = self._extract_metric(row, "keyword_f1_k", "accuracy_k")
             items.append(
                 AdminPipelineRunItem(
                     request_id=row.get("request_id"),
@@ -111,6 +128,9 @@ class AdminPanelService:
                     status=status,
                     accuracy_score=(ratio_pct / 100.0) if ratio_pct is not None else None,
                     accuracy_ratio_pct=ratio_pct,
+                    similarity_s=sim_s,
+                    timestamp_t=ts_t,
+                    keyword_f1_k=kw_k,
                     refined=row.get("refined"),
                 ),
             )

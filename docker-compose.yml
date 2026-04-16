@@ -1,0 +1,44 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: etherai-backend
+    ports:
+      - "8000:8000"
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      TEMP_AUDIO_DIR: storage/temp/audio
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_CHAT_API_KEY: ${GROQ_CHAT_API_KEY:-}
+      GROQ_WHISPER_API_KEY: ${GROQ_WHISPER_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_KEY: ${SUPABASE_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-auto}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      ADMIN_API_ROLES: ${ADMIN_API_ROLES:-super_admin,ops_admin,content_admin,viewer}
+    volumes:
+      - backend_temp_audio:/app/storage/temp/audio
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_SITE_URL: ${VITE_SITE_URL:-}
+    container_name: etherai-web
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_temp_audio:

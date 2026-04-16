@@ -6,3 +6,17 @@ dist/
 .env
 .env.*
 !.env.example
+
+# --- Không cần đẩy lên Git (file tạm / khóa ứng dụng) ---
+# Microsoft Word / Office: file khóa khi đang mở (~$...) và bản nháp tạm (~WRL...)
+~$*
+~WRL*.tmp
+
+# OS / editor
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Báo cáo Word (tuỳ chọn — chỉ dùng .md trên repo thì bỏ comment dòng sau)
+# *.docx
+Bai_Bao_Cao_TTTN.md

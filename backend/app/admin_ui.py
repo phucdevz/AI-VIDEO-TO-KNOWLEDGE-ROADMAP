@@ -930,6 +930,35 @@ def _quality_summary_markdown() -> str:
 """
 
 
+def _experiment_table_markdown(limit: int = 10) -> str:
+    rows = _panel_service().list_pipeline_runs(limit=max(1, int(limit))).items
+    if not rows:
+        return "### Mẫu bảng thực nghiệm (dữ liệu thật)\n\n_Chưa có dữ liệu system logs._"
+
+    lines = [
+        "### Mẫu bảng thực nghiệm (dữ liệu thật)",
+        "",
+        "| STT | Request ID | Provider | Latency (ms) | S | T | K | STK | Accuracy (%) | Status | Error |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|",
+    ]
+    for i, r in enumerate(rows, start=1):
+        s = f"{r.similarity_s:.4f}" if isinstance(r.similarity_s, (int, float)) else "—"
+        t = f"{r.timestamp_t:.4f}" if isinstance(r.timestamp_t, (int, float)) else "—"
+        k = f"{r.keyword_f1_k:.4f}" if isinstance(r.keyword_f1_k, (int, float)) else "—"
+        stk = f"{r.accuracy_score:.4f}" if isinstance(r.accuracy_score, (int, float)) else "—"
+        acc = f"{r.accuracy_ratio_pct:.2f}" if isinstance(r.accuracy_ratio_pct, (int, float)) else "—"
+        lat = f"{r.latency_ms:.1f}" if isinstance(r.latency_ms, (int, float)) else "—"
+        err = (r.error_type or "—").replace("|", "\\|")
+        rid = (r.request_id or "—").replace("|", "\\|")
+        provider = (r.provider or "—").replace("|", "\\|")
+        lines.append(
+            f"| {i} | `{rid}` | `{provider}` | {lat} | {s} | {t} | {k} | {stk} | {acc} | {r.status} | `{err}` |",
+        )
+    lines.append("")
+    lines.append("_Gợi ý: copy bảng này trực tiếp vào mục 4.2.7 của báo cáo._")
+    return "\n".join(lines)
+
+
 def _flags_refresh() -> tuple[str, bool, int, int, bool]:
     f = _panel_service().get_feature_flags()
     return (
@@ -1082,9 +1111,13 @@ def build_admin_blocks() -> gr.Blocks:
                         gr.Markdown("### Chi tiết & dữ liệu lịch sử", elem_classes=["admin-muted"])
                         trend_html = gr.HTML(_analytics_trend_html())
                         analytics_md = gr.Markdown()
+                        exp_limit = gr.Slider(label="Số dòng bảng thực nghiệm", minimum=5, maximum=30, step=1, value=10)
+                        exp_md = gr.Markdown(_experiment_table_markdown(10))
                         with gr.Row(elem_classes=["admin-btn-row"]):
                             refresh_an = gr.Button("Refresh analytics", variant="primary")
+                            refresh_exp = gr.Button("Refresh bảng thực nghiệm", variant="secondary")
                         refresh_an.click(_refresh_analytics_bundle, outputs=[trend_html, analytics_md])
+                        refresh_exp.click(_experiment_table_markdown, [exp_limit], [exp_md])
                         gr.Markdown("### Export", elem_classes=["admin-muted"])
                         with gr.Row(elem_classes=["admin-btn-row"]):
                             csv_btn = gr.Button("Export evaluation CSV")
@@ -1252,6 +1285,7 @@ def build_admin_blocks() -> gr.Blocks:
             outputs=[groq_in, groq_chat_in, groq_whisper_in, google_in, supa_url, supa_key, ai_provider],
         )
         demo.load(_refresh_analytics_bundle, outputs=[trend_html, analytics_md])
+        demo.load(lambda: _experiment_table_markdown(10), outputs=exp_md)
         demo.load(
             lambda: _ops_refresh_bundle(40, 40, "", "", "", "", ""),
             outputs=[ops_kpi_html, ops_runs_md, ops_logs_md],

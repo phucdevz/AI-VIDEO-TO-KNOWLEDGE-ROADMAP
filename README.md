@@ -105,6 +105,25 @@ npm run build
 
 (`prebuild` sẽ chạy sinh `public/sitemap.xml` và `robots.txt` qua `tsx scripts/generate-seo-files.ts`.)
 
+### Chạy bằng Docker Compose
+
+Từ thư mục gốc repo:
+
+```bash
+docker compose up --build
+```
+
+Sau khi chạy:
+
+- Frontend: `http://localhost:5173`
+- Backend docs: `http://localhost:8000/docs`
+
+Lưu ý:
+
+- Các biến API key/Supabase cho backend được đọc từ biến môi trường shell khi chạy compose (ví dụ `GROQ_API_KEY`, `GOOGLE_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`).
+- Các biến `VITE_*` cho frontend được bake vào image tại build-time (qua `docker-compose.yml` `build.args`).
+- Audio tạm của backend được lưu trên volume `backend_temp_audio`.
+
 ---
 
 ## Biến môi trường

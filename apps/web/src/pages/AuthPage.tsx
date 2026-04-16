@@ -250,7 +250,7 @@ export function AuthPage() {
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-ds-base text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
-                    placeholder={isVi ? 'Nguyễn Văn A' : 'Ada Lovelace'}
+                    placeholder={isVi ? 'Nguyen Truong Phuc' : 'Nguyen Truong Phuc'}
                     autoComplete="name"
                   />
                 </div>
@@ -266,7 +266,7 @@ export function AuthPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="ds-transition w-full rounded-ds-sm border border-ds-border bg-ds-bg/80 px-4 py-3 text-ds-base text-ds-text-primary focus:border-ds-primary focus:outline-none focus:ring-2 focus:ring-ds-primary/40"
-                  placeholder={isVi ? 'ban@truong.edu.vn' : 'you@university.edu'}
+                  placeholder={isVi ? 'username@etherai.edu.vn' : 'username@etherai.edu.vn'}
                   autoComplete="email"
                 />
               </div>

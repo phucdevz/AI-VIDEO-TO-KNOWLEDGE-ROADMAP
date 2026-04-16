@@ -29,6 +29,9 @@ class AdminPipelineRunItem(BaseModel):
     status: Literal["success", "error", "unknown"] = "unknown"
     accuracy_score: float | None = None
     accuracy_ratio_pct: float | None = None
+    similarity_s: float | None = None
+    timestamp_t: float | None = None
+    keyword_f1_k: float | None = None
     refined: bool | None = None
 
 
